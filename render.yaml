@@ -1,0 +1,21 @@
+# One-click deploy on Render (https://render.com).
+# 1. Push server.js, adsb-proxy.js, ais-proxy.js, package.json, render.yaml to a GitHub repo.
+# 2. Render dashboard -> New -> Blueprint -> pick the repo -> Apply.
+# 3. Copy the service URL into StreetWatch.jsx (BACKEND_URL + AIS_BACKEND_URL), then redeploy the web app.
+services:
+  - type: web
+    name: streetwatch-proxy
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: ALLOW_ORIGIN
+        value: "https://streetwatch-blond.vercel.app"   # your web app origin (lock it down)
+      - key: RATE_LIMIT
+        value: "120"           # requests per IP per minute
+      - key: AIS_PROVIDER
+        value: digitraffic      # keyless, Baltic. Switch to "aisstream" for global marine.
+      # - key: AISSTREAM_KEY    # required only if AIS_PROVIDER=aisstream (free key from aisstream.io)
+      #   sync: false

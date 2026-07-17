@@ -1,0 +1,13 @@
+{
+  "name": "streetwatch-proxy",
+  "version": "1.0.0",
+  "description": "Combined ADS-B (aircraft) + AIS (ships) proxy for the StreetWatch app. Zero dependencies.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
