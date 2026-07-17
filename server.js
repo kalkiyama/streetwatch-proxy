@@ -1,0 +1,82 @@
+// server.js — StreetWatch combined proxy (hardened).
+// One service, both radars: /api/aircraft (ADS-B) + /api/vessels (AIS).
+// Node >= 20.  Run: node server.js
+//
+// Security features:
+//   - Per-IP rate limiting            (env RATE_LIMIT, default 120 req/min)
+//   - Origin allow-listing for CORS   (env ALLOW_ORIGIN, comma-separated)
+//   - Strict input validation + radius clamp
+//
+// Point BOTH frontend URLs at this one service:
+//   const BACKEND_URL     = "https://your-service.onrender.com";
+//   const AIS_BACKEND_URL = "https://your-service.onrender.com";
+
+const http = require("http");
+const adsb = require("./adsb-proxy.js");
+const ais = require("./ais-proxy.js");
+
+const PORT = process.env.PORT || 8080;
+const ORIGINS = (process.env.ALLOW_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
+const WINDOW_MS = 60000;
+const LIMIT = parseInt(process.env.RATE_LIMIT || "120", 10); // requests per IP per minute
+const MAX_RADIUS = 250;
+
+// ---- per-IP rate limiter (fixed window, in-memory) ----
+const hits = new Map();
+function rateLimited(ip) {
+  const now = Date.now();
+  let e = hits.get(ip);
+  if (!e || e.reset < now) { e = { count: 0, reset: now + WINDOW_MS }; hits.set(ip, e); }
+  e.count++;
+  return e.count > LIMIT;
+}
+const sweep = setInterval(() => { const now = Date.now(); for (const [k, v] of hits) if (v.reset < now) hits.delete(k); }, WINDOW_MS);
+if (sweep.unref) sweep.unref();
+const clientIp = (req) => (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "unknown";
+
+// ---- CORS: echo only allow-listed origins (or * if configured) ----
+function corsHeaders(origin) {
+  const h = { "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Max-Age": "600" };
+  if (ORIGINS.includes("*")) h["Access-Control-Allow-Origin"] = "*";
+  else if (origin && ORIGINS.includes(origin)) { h["Access-Control-Allow-Origin"] = origin; h["Vary"] = "Origin"; }
+  return h;
+}
+function send(res, status, obj, origin) {
+  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", ...corsHeaders(origin) });
+  res.end(JSON.stringify(obj));
+}
+
+async function handler(req, res) {
+  const origin = req.headers.origin;
+  if (req.method === "OPTIONS") return send(res, 204, {}, origin);
+  const p = new URL(req.url, "http://localhost").pathname;
+  if (p === "/health") return send(res, 200, { ok: true, services: ["aircraft", "vessels"], ts: Date.now() }, origin);
+
+  if (rateLimited(clientIp(req))) return send(res, 429, { error: "rate_limited", retryAfterSec: 60 }, origin);
+
+  if (p === "/api/aircraft" || p === "/api/vessels") {
+    const u = new URL(req.url, "http://localhost");
+    const lat = parseFloat(u.searchParams.get("lat"));
+    const lon = parseFloat(u.searchParams.get("lon"));
+    let radius = parseInt(u.searchParams.get("radius") || "50", 10);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180)
+      return send(res, 400, { error: "lat and lon required (lat -90..90, lon -180..180)" }, origin);
+    if (!Number.isFinite(radius) || radius < 1) radius = 50;
+    radius = Math.min(radius, MAX_RADIUS);
+    try {
+      const data = p === "/api/aircraft" ? await adsb.fetchAircraft(lat, lon, radius) : await ais.getVessels(lat, lon, radius);
+      return send(res, 200, { query: { lat, lon, radius }, ...data }, origin);
+    } catch (e) {
+      return send(res, 502, { error: "upstream_unavailable", detail: String((e && e.message) || e) }, origin);
+    }
+  }
+  return send(res, 404, { error: "not_found", routes: ["/api/aircraft", "/api/vessels", "/health"] }, origin);
+}
+
+function createServer() { return http.createServer(handler); }
+
+if (require.main === module) {
+  if ((process.env.AIS_PROVIDER || "digitraffic") === "aisstream") ais.startAisstream();
+  createServer().listen(PORT, () => console.log(`StreetWatch proxy on :${PORT} — origins=${ORIGINS.join(",")} limit=${LIMIT}/min`));
+}
+module.exports = { createServer };
