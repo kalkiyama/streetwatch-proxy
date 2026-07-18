@@ -120,13 +120,27 @@ function startAisstream() {
       ws.send(JSON.stringify({ APIKey: AISSTREAM_KEY, BoundingBoxes: [[[-90, -180], [90, 180]]],
         FilterMessageTypes: ["PositionReport", "ShipStaticData"] }));
     });
-    ws.addEventListener("message", (ev) => {
+    try { ws.binaryType = "arraybuffer"; } catch {}
+    ws.addEventListener("message", async (ev) => {
       lastMsgAt = Date.now(); msgCount++;
       try {
-        const m = JSON.parse(ev.data);
+        // aisstream sends JSON in binary frames; the runtime may surface them as
+        // string, Buffer, ArrayBuffer, or Blob. Decode all of them before parsing.
+        let raw = ev.data;
+        if (typeof raw !== "string") {
+          if (raw instanceof ArrayBuffer) raw = Buffer.from(raw).toString("utf8");
+          else if (typeof Buffer !== "undefined" && Buffer.isBuffer(raw)) raw = raw.toString("utf8");
+          else if (raw && typeof raw.text === "function") raw = await raw.text(); // Blob
+          else raw = String(raw);
+        }
+        const m = JSON.parse(raw);
         if (m && m.error) { console.error("[aisstream] server error:", m.error); return; }
         ingestAisstream(m);
-      } catch (e) { badCount++; }
+      } catch (e) {
+        badCount++;
+        if (badCount === 1) console.error("[aisstream] first parse failure:", e.message,
+          "| frame type:", ev.data && ev.data.constructor ? ev.data.constructor.name : typeof ev.data);
+      }
     });
     ws.addEventListener("close", () => { console.warn("[aisstream] closed — reconnecting in 3s"); setTimeout(connect, 3000); });
     ws.addEventListener("error", () => { try { ws.close(); } catch {} });
