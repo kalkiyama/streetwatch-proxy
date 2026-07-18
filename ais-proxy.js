@@ -105,16 +105,29 @@ function aisstreamFleet() {
 function startAisstream() {
   if (!AISSTREAM_KEY) { console.warn("[aisstream] AISSTREAM_KEY not set — no data will arrive"); return; }
   if (typeof WebSocket === "undefined") { console.warn("[aisstream] needs Node >= 21 global WebSocket"); return; }
+  let lastMsgAt = Date.now();
   const connect = () => {
     const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
     ws.addEventListener("open", () => {
+      console.log("[aisstream] connected");
+      lastMsgAt = Date.now();
       // NOTE: whole-globe bbox is a firehose; narrow it in production.
       ws.send(JSON.stringify({ APIKey: AISSTREAM_KEY, BoundingBoxes: [[[-90, -180], [90, 180]]],
         FilterMessageTypes: ["PositionReport", "ShipStaticData"] }));
     });
-    ws.addEventListener("message", (ev) => { try { ingestAisstream(JSON.parse(ev.data)); } catch {} });
-    ws.addEventListener("close", () => setTimeout(connect, 3000));
+    ws.addEventListener("message", (ev) => { lastMsgAt = Date.now(); try { ingestAisstream(JSON.parse(ev.data)); } catch {} });
+    ws.addEventListener("close", () => { console.warn("[aisstream] closed — reconnecting in 3s"); setTimeout(connect, 3000); });
     ws.addEventListener("error", () => { try { ws.close(); } catch {} });
+    // Watchdog: a half-open socket emits nothing — if the firehose goes silent
+    // for 2 minutes, the connection is dead. Force-close to trigger reconnect.
+    const dog = setInterval(() => {
+      if (Date.now() - lastMsgAt > 120000) {
+        console.warn("[aisstream] silent for 2 min — forcing reconnect");
+        clearInterval(dog);
+        try { ws.close(); } catch {}
+      }
+    }, 30000);
+    ws.addEventListener("close", () => clearInterval(dog));
   };
   connect();
   setInterval(() => { const cut = Date.now() - 10 * 60 * 1000; for (const [k, v] of store) if (v.lastSeen < cut) store.delete(k); }, 60000);
