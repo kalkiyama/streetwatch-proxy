@@ -106,6 +106,11 @@ function startAisstream() {
   if (!AISSTREAM_KEY) { console.warn("[aisstream] AISSTREAM_KEY not set — no data will arrive"); return; }
   if (typeof WebSocket === "undefined") { console.warn("[aisstream] needs Node >= 21 global WebSocket"); return; }
   let lastMsgAt = Date.now();
+  let msgCount = 0, badCount = 0;
+  setInterval(() => {
+    console.log(`[aisstream] 60s: msgs=${msgCount} badParse=${badCount} fleet=${store.size}`);
+    msgCount = 0; badCount = 0;
+  }, 60000);
   const connect = () => {
     const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
     ws.addEventListener("open", () => {
@@ -115,7 +120,14 @@ function startAisstream() {
       ws.send(JSON.stringify({ APIKey: AISSTREAM_KEY, BoundingBoxes: [[[-90, -180], [90, 180]]],
         FilterMessageTypes: ["PositionReport", "ShipStaticData"] }));
     });
-    ws.addEventListener("message", (ev) => { lastMsgAt = Date.now(); try { ingestAisstream(JSON.parse(ev.data)); } catch {} });
+    ws.addEventListener("message", (ev) => {
+      lastMsgAt = Date.now(); msgCount++;
+      try {
+        const m = JSON.parse(ev.data);
+        if (m && m.error) { console.error("[aisstream] server error:", m.error); return; }
+        ingestAisstream(m);
+      } catch (e) { badCount++; }
+    });
     ws.addEventListener("close", () => { console.warn("[aisstream] closed — reconnecting in 3s"); setTimeout(connect, 3000); });
     ws.addEventListener("error", () => { try { ws.close(); } catch {} });
     // Watchdog: a half-open socket emits nothing — if the firehose goes silent
