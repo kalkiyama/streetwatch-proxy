@@ -50,6 +50,8 @@ function normalize(upstream) {
         headingDeg: heading,
         verticalRateFpm: typeof a.baro_rate === "number" ? a.baro_rate : null,
         squawk: a.squawk || null,
+        category: a.category || null,            // ADS-B emitter category (A1 light … B6 UAV)
+        isDrone: a.category === "B6",            // B6 = unmanned aerial vehicle
         seenPosSec: typeof a.seen_pos === "number" ? a.seen_pos : null,
       };
     });
