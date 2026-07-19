@@ -26,12 +26,21 @@ const hits = new Map();
 function rateLimited(ip) {
   const now = Date.now();
   let e = hits.get(ip);
-  if (!e || e.reset < now) { e = { count: 0, reset: now + WINDOW_MS }; hits.set(ip, e); }
+  if (!e || e.reset < now) {
+    // Bound memory: if the table is saturated (spoofed-IP flood), drop expired
+    // entries first; if still full, fail closed for unknown IPs this window.
+    if (hits.size >= MAX_TRACKED_IPS) {
+      for (const [k, v] of hits) if (v.reset < now) hits.delete(k);
+      if (hits.size >= MAX_TRACKED_IPS) return true;
+    }
+    e = { count: 0, reset: now + WINDOW_MS }; hits.set(ip, e);
+  }
   e.count++;
   return e.count > LIMIT;
 }
 const sweep = setInterval(() => { const now = Date.now(); for (const [k, v] of hits) if (v.reset < now) hits.delete(k); }, WINDOW_MS);
 if (sweep.unref) sweep.unref();
+const MAX_TRACKED_IPS = 20000; // hard cap: prevents memory exhaustion via IP-spoofed floods
 const clientIp = (req) => (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "unknown";
 
 // ---- CORS: echo only allow-listed origins (or * if configured) ----
@@ -41,8 +50,15 @@ function corsHeaders(origin) {
   else if (origin && ORIGINS.includes(origin)) { h["Access-Control-Allow-Origin"] = origin; h["Vary"] = "Origin"; }
   return h;
 }
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",           // no MIME sniffing
+  "X-Frame-Options": "DENY",                      // no framing this API
+  "Referrer-Policy": "no-referrer",
+  "Cross-Origin-Resource-Policy": "same-site",
+  "Strict-Transport-Security": "max-age=31536000", // HTTPS only
+};
 function send(res, status, obj, origin) {
-  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", ...corsHeaders(origin) });
+  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", ...SECURITY_HEADERS, ...corsHeaders(origin) });
   res.end(JSON.stringify(obj));
 }
 
@@ -67,7 +83,8 @@ async function handler(req, res) {
       const data = p === "/api/aircraft" ? await adsb.fetchAircraft(lat, lon, radius) : await ais.getVessels(lat, lon, radius);
       return send(res, 200, { query: { lat, lon, radius }, ...data }, origin);
     } catch (e) {
-      return send(res, 502, { error: "upstream_unavailable", detail: String((e && e.message) || e) }, origin);
+      console.error("[proxy] upstream error:", (e && e.message) || e); // logged, not exposed
+      return send(res, 502, { error: "upstream_unavailable" }, origin);
     }
   }
   return send(res, 404, { error: "not_found", routes: ["/api/aircraft", "/api/vessels", "/health"] }, origin);
