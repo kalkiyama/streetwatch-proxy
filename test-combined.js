@@ -3,6 +3,7 @@ const assert = require("assert");
 const AIRCRAFT = { ac: [
   { hex:"a465df", flight:"UAL1310 ", r:"N38257", t:"B738", lat:51.5, lon:-0.4, alt_baro:38000, gs:339, track:276, category:"A3" },
   { hex:"ae1234", flight:"REAPER01", t:"MQ9", lat:51.6, lon:-0.5, alt_baro:22000, gs:170, track:90, category:"B6" },
+  { hex:"ae5678", flight:"RCH471", t:"C17", lat:51.7, lon:-0.6, alt_baro:28000, gs:420, track:180, category:"A5", dbFlags:1 },
 ], now:Date.now() };
 const DT_LOC = { features: [{ mmsi:230012340, geometry:{ type:"Point", coordinates:[24.95,60.15] }, properties:{ sog:12, cog:145, navStat:0, heading:147 } }] };
 const DT_VES = [{ mmsi:230012340, name:"AURORA BOTNIA", shipType:60 }];
@@ -22,7 +23,7 @@ const server = createServer().listen(0, async () => {
     assert.strictEqual(j.ok, true); assert.deepStrictEqual(j.services, ["aircraft","vessels","drones"]);
     console.log("PASS  /health -> both services up");
     r = await fetch(`${base}/api/aircraft?lat=51.47&lon=-0.45&radius=75`); j = await r.json();
-    assert.strictEqual(r.status,200); assert.ok(j.count>=2 && j.aircraft.some(a=>a.callsign==="UAL1310"));
+    assert.strictEqual(r.status,200); assert.ok(j.count>=3 && j.aircraft.some(a=>a.callsign==="UAL1310"));
     const drone = j.aircraft.find(a=>a.category==="B6");
     assert.ok(drone && drone.isDrone === true && drone.callsign === "REAPER01", "B6 contact flagged as drone");
     console.log(`PASS  /api/aircraft -> ${j.count} aircraft (incl. 1 UAV flagged isDrone)`);
@@ -35,7 +36,9 @@ const server = createServer().listen(0, async () => {
     r = await fetch(`${base}/api/drones`); j = await r.json();
     assert.strictEqual(r.status, 200);
     assert.ok(Array.isArray(j.drones) && j.sweep && j.sweep.sites >= 20, "drones payload shape");
-    assert.ok(j.drones.some((d) => d.id === "ae1234"), "mocked B6 contact present in sweep");
+    assert.ok(j.drones.some((d) => d.id === "ae1234" && d.kind === "uav"), "B6 contact classified as uav");
+    assert.ok(j.drones.some((d) => d.id === "ae5678" && d.kind === "military"), "dbFlags contact classified as military");
+    assert.ok(j.counts && j.counts.uav >= 1 && j.counts.military >= 1, "counts by kind");
     assert.ok(j.drones[0].site && j.drones[0].country, "sighting carries site + country");
     console.log(`PASS  /api/drones -> ${j.count} live drone(s) across ${j.sweep.sites} sites`);
     r = await fetch(`${base}/api/drones/track?id=ae1234`); j = await r.json();

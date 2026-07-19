@@ -11,6 +11,18 @@
 
 const { fetchAircraft } = require("./adsb-proxy");
 
+// ICAO type designators for uncrewed platforms that often DON'T squawk category B6.
+// Prefix match on MQ-/RQ- series covers Reaper, Predator, Triton, Global Hawk, Shadow…
+const UAV_TYPE_RE = /^(MQ\d|RQ\d|TB2|ANKA|HRON|HERN|S100|WK45|SW4|GHWK)/i;
+
+// What kind of contact is this, and why? Returns null for ordinary civil traffic.
+function classify(a) {
+  if (a.category === "B6") return { kind: "uav", why: "ADS-B category B6" };
+  if (a.typeCode && UAV_TYPE_RE.test(a.typeCode)) return { kind: "uav", why: `type ${a.typeCode}` };
+  if (a.military) return { kind: "military", why: "military registry flag" };
+  return null;
+}
+
 const SITE_INTERVAL_MS = Number(process.env.SWEEP_INTERVAL_MS || 15000); // one site per 15s → full cycle ≈ 7 min
 const RADIUS_NM = 250;                 // upstream maximum
 const RETAIN_MS = 24 * 60 * 60 * 1000; // keep sightings for 24h
@@ -52,7 +64,7 @@ const seen = new Map();     // id -> sighting record
 let cursor = 0;
 let cycles = 0, sweepErrors = 0, lastSweepAt = null;
 
-function record(a, site) {
+function record(a, site, cls) {
   const now = Date.now();
   const prev = seen.get(a.id);
   const point = [Math.round(a.lat * 1000) / 1000, Math.round(a.lon * 1000) / 1000, now];
@@ -62,6 +74,7 @@ function record(a, site) {
     prev.altFt = a.altFt; prev.groundSpeedKt = a.groundSpeedKt; prev.headingDeg = a.headingDeg;
     prev.site = site[0]; prev.country = site[1];
     prev.callsign = a.callsign || prev.callsign;
+    prev.kind = cls.kind; prev.why = cls.why;
     if (prev.track.length === 0 || now - prev.track[prev.track.length - 1][2] > 60000) {
       prev.track.push(point);
       if (prev.track.length > 240) prev.track.shift();   // ~4h of one-minute points
@@ -70,7 +83,8 @@ function record(a, site) {
   }
   if (seen.size >= MAX_TRACKED) return;                  // bounded memory
   seen.set(a.id, {
-    id: a.id, callsign: a.callsign || null, typeCode: a.typeCode || null,
+    id: a.id, kind: cls.kind, why: cls.why,
+    callsign: a.callsign || null, typeCode: a.typeCode || null,
     registration: a.registration || null, desc: a.desc || null, military: a.military ?? null,
     lat: a.lat, lon: a.lon, altFt: a.altFt, groundSpeedKt: a.groundSpeedKt, headingDeg: a.headingDeg,
     site: site[0], country: site[1], siteLat: site[2], siteLon: site[3],
@@ -89,7 +103,7 @@ async function sweepOnce() {
   if (cursor % SITES.length === 0) { cycles++; prune(); }
   try {
     const data = await fetchAircraft(site[2], site[3], RADIUS_NM);
-    (data.aircraft || []).filter((a) => a.isDrone).forEach((a) => record(a, site));
+    (data.aircraft || []).forEach((a) => { const cls = classify(a); if (cls) record(a, site, cls); });
     lastSweepAt = Date.now();
   } catch (e) {
     sweepErrors++;
@@ -116,11 +130,14 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
     .filter((s) => s.lastSeen >= cutoff)
     .sort((a, b) => b.lastSeen - a.lastSeen)
     .map(({ track, ...rest }) => ({ ...rest, trackPoints: track.length }));
+  const byKind = drones.reduce((m, d) => ((m[d.kind] = (m[d.kind] || 0) + 1), m), {});
   return {
-    source: "airplanes.live · ADS-B category B6",
+    source: "airplanes.live · ADS-B (category B6, UAV type codes, military registry flag)",
     updated: new Date().toISOString(),
     sweep: { sites: SITES.length, cycles, lastSweepAt, errors: sweepErrors, tracked24h: seen.size },
     count: drones.length,
+    counts: { uav: byKind.uav || 0, military: byKind.military || 0 },
+    note: "Only aircraft that broadcast ADS-B appear. Aircraft flying with transponders off are not visible to any public feed.",
     drones,
   };
 }
