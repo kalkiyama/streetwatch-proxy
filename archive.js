@@ -17,11 +17,18 @@ const RETAIN_DAYS = Number(process.env.ARCHIVE_RETAIN_DAYS || 90);
 // Hard ceiling as well as the time limit: whichever bites first wins. Sized so the
 // table stays well inside a free-tier Postgres (~250 bytes/row incl. indexes).
 const MAX_ROWS = Number(process.env.ARCHIVE_MAX_ROWS || 1200000);
+// Writes are BATCHED, not streamed. A serverless Postgres (Neon) bills compute time and
+// suspends when idle — a trickle of single-row inserts would keep it awake 24/7 and burn
+// the whole free allowance. Buffering in memory and flushing every few minutes lets the
+// database sleep between flushes, cutting compute time by roughly an order of magnitude.
+const FLUSH_MS = Number(process.env.ARCHIVE_FLUSH_MS || 10 * 60 * 1000);  // flush every 10 min
+const FLUSH_MAX = Number(process.env.ARCHIVE_FLUSH_MAX || 400);           // ...or when the buffer fills
 const URL = process.env.DATABASE_URL || "";
 
 let pool = null;
 let ready = false;
-let writes = 0, writeErrors = 0;
+let writes = 0, writeErrors = 0, flushes = 0;
+let buffer = [];
 
 async function init() {
   if (!URL) { console.log("[archive] disabled (no DATABASE_URL) — sweep stays in memory only"); return false; }
@@ -32,8 +39,9 @@ async function init() {
   pool = new Pool({
     connectionString: URL,
     ssl: { rejectUnauthorized: false },   // managed Postgres (Neon/Supabase) terminates TLS
-    max: 3,                               // small pool: this is a tiny service
-    idleTimeoutMillis: 30000,
+    max: 2,                               // small pool: this is a tiny service
+    idleTimeoutMillis: 5000,              // release connections quickly so the compute can suspend
+    allowExitOnIdle: true,
     connectionTimeoutMillis: 10000,
   });
   pool.on("error", (e) => console.error("[archive] idle client error:", e.message));
@@ -64,6 +72,8 @@ async function init() {
     console.log(`[archive] connected · retaining ${RETAIN_DAYS} days`);
     prune();
     setInterval(prune, 6 * 60 * 60 * 1000);   // prune every 6h
+    setInterval(flush, FLUSH_MS);             // batched writes
+    process.on("SIGTERM", () => { flush().catch(() => {}); });  // don't lose the buffer on redeploy
     return true;
   } catch (e) {
     console.error("[archive] init failed:", e.message);
@@ -71,26 +81,46 @@ async function init() {
   }
 }
 
-// Record one observation. Parameterised query — no string concatenation, ever.
-async function record(c) {
+// Queue one observation. Nothing touches the database until flush().
+function record(c) {
   if (!ready) return;
   if (c.kind !== "uav" && c.kind !== "military") return;   // scope guard
+  buffer.push([
+    c.id, c.lastSeen || Date.now(), c.lat, c.lon,
+    Number.isFinite(c.altFt) ? Math.round(c.altFt) : null,
+    Number.isFinite(c.groundSpeedKt) ? Math.round(c.groundSpeedKt) : null,
+    Number.isFinite(c.headingDeg) ? c.headingDeg : null,
+    c.kind, c.confidence || null, c.callsign || null, c.typeCode || null,
+    c.desc || null, c.site || null, c.country || null,
+  ]);
+  if (buffer.length >= FLUSH_MAX) flush();
+}
+
+// Write the buffer as ONE multi-row INSERT. Still fully parameterised.
+async function flush() {
+  if (!ready || buffer.length === 0) return;
+  const batch = buffer;
+  buffer = [];
+  const COLS = 14;
+  const values = batch.map((_, i) => {
+    const b = i * COLS;
+    const ph = [];
+    for (let k = 1; k <= COLS; k++) ph.push("$" + (b + k));
+    // ts arrives as epoch ms and is converted in SQL; every value is still a bound parameter
+    return "(" + ph[0] + ", to_timestamp(" + ph[1] + "/1000.0), " + ph.slice(2).join(", ") + ")";
+  }).join(", ");
   try {
     await pool.query(
       `INSERT INTO drone_tracks
         (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country)
-       VALUES ($1, to_timestamp($2/1000.0), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-      [c.id, c.lastSeen || Date.now(), c.lat, c.lon,
-       Number.isFinite(c.altFt) ? Math.round(c.altFt) : null,
-       Number.isFinite(c.groundSpeedKt) ? Math.round(c.groundSpeedKt) : null,
-       Number.isFinite(c.headingDeg) ? c.headingDeg : null,
-       c.kind, c.confidence || null, c.callsign || null, c.typeCode || null,
-       c.desc || null, c.site || null, c.country || null]
+       VALUES ${values}`,
+      batch.flat()
     );
-    writes++;
+    writes += batch.length; flushes++;
+    console.log(`[archive] flushed ${batch.length} rows (batch ${flushes})`);
   } catch (e) {
     writeErrors++;
-    if (writeErrors % 25 === 1) console.error("[archive] write failed:", e.message);
+    console.error("[archive] flush failed:", e.message);
   }
 }
 
@@ -176,7 +206,7 @@ async function stats() {
     const r = rows[0];
     return {
       enabled: true, retainDays: RETAIN_DAYS, maxRows: MAX_ROWS,
-      writes, writeErrors,
+      writes, writeErrors, flushes, buffered: buffer.length, flushMinutes: FLUSH_MS / 60000,
       points: r.points, contacts: r.contacts, oldest: r.oldest,
       sizeMb: Number((Number(r.bytes) / 1e6).toFixed(1)),
       capacityUsedPct: Number(((r.points / MAX_ROWS) * 100).toFixed(1)),
@@ -186,4 +216,4 @@ async function stats() {
 
 const isReady = () => ready;
 
-module.exports = { init, record, history, track, stats, isReady, RETAIN_DAYS };
+module.exports = { init, record, flush, history, track, stats, isReady, RETAIN_DAYS };
