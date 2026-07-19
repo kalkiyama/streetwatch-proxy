@@ -14,6 +14,7 @@
 const http = require("http");
 const adsb = require("./adsb-proxy.js");
 const ais = require("./ais-proxy.js");
+const droneSweep = require("./drone-sweep.js");
 
 const PORT = process.env.PORT || 8080;
 const ORIGINS = (process.env.ALLOW_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
@@ -66,7 +67,24 @@ async function handler(req, res) {
   const origin = req.headers.origin;
   if (req.method === "OPTIONS") return send(res, 204, {}, origin);
   const p = new URL(req.url, "http://localhost").pathname;
-  if (p === "/health") return send(res, 200, { ok: true, services: ["aircraft", "vessels"], ts: Date.now() }, origin);
+  if (p === "/health") return send(res, 200, { ok: true, services: ["aircraft", "vessels", "drones"], ts: Date.now() }, origin);
+
+  if (p === "/api/drones") {
+    const u = new URL(req.url, "http://localhost");
+    let mins = parseInt(u.searchParams.get("mins") || "15", 10);
+    if (!Number.isFinite(mins) || mins < 1) mins = 15;
+    mins = Math.min(mins, 24 * 60);
+    return send(res, 200, droneSweep.getDrones(mins * 60000), origin);
+  }
+
+  if (p === "/api/drones/track") {
+    const u = new URL(req.url, "http://localhost");
+    const id = (u.searchParams.get("id") || "").slice(0, 12);
+    if (!id) return send(res, 400, { error: "id required" }, origin);
+    const t = droneSweep.getTrack(id);
+    if (!t) return send(res, 404, { error: "unknown_contact" }, origin);
+    return send(res, 200, t, origin);
+  }
 
   if (rateLimited(clientIp(req))) return send(res, 429, { error: "rate_limited", retryAfterSec: 60 }, origin);
 
@@ -87,7 +105,7 @@ async function handler(req, res) {
       return send(res, 502, { error: "upstream_unavailable" }, origin);
     }
   }
-  return send(res, 404, { error: "not_found", routes: ["/api/aircraft", "/api/vessels", "/health"] }, origin);
+  return send(res, 404, { error: "not_found", routes: ["/api/aircraft", "/api/vessels", "/api/drones", "/api/drones/track", "/health"] }, origin);
 }
 
 function createServer() { return http.createServer(handler); }
@@ -95,5 +113,6 @@ function createServer() { return http.createServer(handler); }
 if (require.main === module) {
   if ((process.env.AIS_PROVIDER || "digitraffic") === "aisstream") ais.startAisstream();
   createServer().listen(PORT, () => console.log(`StreetWatch proxy on :${PORT} — origins=${ORIGINS.join(",")} limit=${LIMIT}/min`));
+droneSweep.start();
 }
 module.exports = { createServer };
