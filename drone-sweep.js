@@ -15,11 +15,23 @@ const { fetchAircraft } = require("./adsb-proxy");
 // Prefix match on MQ-/RQ- series covers Reaper, Predator, Triton, Global Hawk, Shadow…
 const UAV_TYPE_RE = /^(MQ\d|RQ\d|TB2|ANKA|HRON|HERN|S100|WK45|SW4|GHWK)/i;
 
-// What kind of contact is this, and why? Returns null for ordinary civil traffic.
+// Manufacturers of manned aircraft. ADS-B emitter category is SELF-DECLARED, so a
+// mis-set transponder can broadcast "B6 / unmanned" from an ordinary Cessna. When the
+// registry description names a manned airframe we keep the contact but mark it disputed
+// rather than presenting a Skylane as a drone.
+const MANNED_RE = /(CESSNA|PIPER|BEECH|CIRRUS|DIAMOND|MOONEY|ROBINSON|BELL|AIRBUS|BOEING|EMBRAER|BOMBARDIER|GULFSTREAM|LEARJET|SOCATA|PILATUS|TECNAM|MAULE|AVIAT|GRUMMAN|EXTRA|ROBIN|SLING|CIRRUS|QUEST|DAHER)/i;
+
+// What kind of contact is this, why, and how much should we trust it?
+// Returns null for ordinary civil traffic.
 function classify(a) {
-  if (a.category === "B6") return { kind: "uav", why: "ADS-B category B6" };
-  if (a.typeCode && UAV_TYPE_RE.test(a.typeCode)) return { kind: "uav", why: `type ${a.typeCode}` };
-  if (a.military) return { kind: "military", why: "military registry flag" };
+  if (a.typeCode && UAV_TYPE_RE.test(a.typeCode))
+    return { kind: "uav", why: `type ${a.typeCode}`, confidence: "confirmed" };
+  if (a.category === "B6") {
+    if (a.desc && MANNED_RE.test(a.desc))
+      return { kind: "uav", why: `B6 claimed · registry says ${a.desc}`, confidence: "disputed" };
+    return { kind: "uav", why: "ADS-B category B6", confidence: "confirmed" };
+  }
+  if (a.military) return { kind: "military", why: "military registry flag", confidence: "confirmed" };
   return null;
 }
 
@@ -74,7 +86,7 @@ function record(a, site, cls) {
     prev.altFt = a.altFt; prev.groundSpeedKt = a.groundSpeedKt; prev.headingDeg = a.headingDeg;
     prev.site = site[0]; prev.country = site[1];
     prev.callsign = a.callsign || prev.callsign;
-    prev.kind = cls.kind; prev.why = cls.why;
+    prev.kind = cls.kind; prev.why = cls.why; prev.confidence = cls.confidence;
     if (prev.track.length === 0 || now - prev.track[prev.track.length - 1][2] > 60000) {
       prev.track.push(point);
       if (prev.track.length > 240) prev.track.shift();   // ~4h of one-minute points
@@ -83,7 +95,7 @@ function record(a, site, cls) {
   }
   if (seen.size >= MAX_TRACKED) return;                  // bounded memory
   seen.set(a.id, {
-    id: a.id, kind: cls.kind, why: cls.why,
+    id: a.id, kind: cls.kind, why: cls.why, confidence: cls.confidence,
     callsign: a.callsign || null, typeCode: a.typeCode || null,
     registration: a.registration || null, desc: a.desc || null, military: a.military ?? null,
     lat: a.lat, lon: a.lon, altFt: a.altFt, groundSpeedKt: a.groundSpeedKt, headingDeg: a.headingDeg,
@@ -136,8 +148,12 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
     updated: new Date().toISOString(),
     sweep: { sites: SITES.length, cycles, lastSweepAt, errors: sweepErrors, tracked24h: seen.size },
     count: drones.length,
-    counts: { uav: byKind.uav || 0, military: byKind.military || 0 },
-    note: "Only aircraft that broadcast ADS-B appear. Aircraft flying with transponders off are not visible to any public feed.",
+    counts: {
+      uav: byKind.uav || 0,
+      military: byKind.military || 0,
+      disputed: drones.filter((d) => d.confidence === "disputed").length,
+    },
+    note: "Only aircraft that broadcast ADS-B appear; aircraft with transponders off are invisible to every public feed. ADS-B emitter category is self-declared, so contacts marked 'disputed' broadcast as unmanned while the registry names a manned airframe.",
     drones,
   };
 }
