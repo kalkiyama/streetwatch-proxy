@@ -52,6 +52,11 @@ function normalize(upstream) {
         squawk: a.squawk || null,
         category: a.category || null,            // ADS-B emitter category (A1 light … B6 UAV)
         isDrone: a.category === "B6",            // B6 = unmanned aerial vehicle
+        desc: String(a.desc || "").trim() || null,        // e.g. "BOEING 737-800"
+        operator: String(a.ownOp || "").trim() || null,   // owner / operator
+        year: a.year ? String(a.year) : null,
+        military: Number.isFinite(a.dbFlags) ? Boolean(a.dbFlags & 1) : null, // dbFlags bit 0 = military
+        emergency: a.emergency && a.emergency !== "none" ? String(a.emergency) : null,
         seenPosSec: typeof a.seen_pos === "number" ? a.seen_pos : null,
       };
     });
