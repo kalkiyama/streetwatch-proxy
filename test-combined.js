@@ -19,7 +19,7 @@ const server = createServer().listen(0, async () => {
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     let r = await fetch(`${base}/health`); let j = await r.json();
-    assert.strictEqual(j.ok, true); assert.deepStrictEqual(j.services, ["aircraft","vessels"]);
+    assert.strictEqual(j.ok, true); assert.deepStrictEqual(j.services, ["aircraft","vessels","drones"]);
     console.log("PASS  /health -> both services up");
     r = await fetch(`${base}/api/aircraft?lat=51.47&lon=-0.45&radius=75`); j = await r.json();
     assert.strictEqual(r.status,200); assert.ok(j.count>=2 && j.aircraft.some(a=>a.callsign==="UAL1310"));
@@ -29,6 +29,18 @@ const server = createServer().listen(0, async () => {
     r = await fetch(`${base}/api/vessels?lat=60.15&lon=24.95&radius=40`); j = await r.json();
     assert.strictEqual(r.status,200); assert.ok(j.count>=1 && j.vessels[0].name==="AURORA BOTNIA");
     console.log(`PASS  /api/vessels -> ${j.count} vessels`);
+
+    // global drone sweep: force one pass, then read the aggregate
+    await require("./drone-sweep.js")._sweepOnce();
+    r = await fetch(`${base}/api/drones`); j = await r.json();
+    assert.strictEqual(r.status, 200);
+    assert.ok(Array.isArray(j.drones) && j.sweep && j.sweep.sites >= 20, "drones payload shape");
+    assert.ok(j.drones.some((d) => d.id === "ae1234"), "mocked B6 contact present in sweep");
+    assert.ok(j.drones[0].site && j.drones[0].country, "sighting carries site + country");
+    console.log(`PASS  /api/drones -> ${j.count} live drone(s) across ${j.sweep.sites} sites`);
+    r = await fetch(`${base}/api/drones/track?id=ae1234`); j = await r.json();
+    assert.strictEqual(r.status, 200); assert.ok(Array.isArray(j.track) && j.track.length >= 1, "track returned");
+    console.log(`PASS  /api/drones/track -> ${j.track.length} point(s)`);
     r = await fetch(`${base}/nope`); assert.strictEqual(r.status,404);
     console.log("PASS  unknown route -> 404 with route hints");
     console.log("\nCOMBINED SERVICE OK");
