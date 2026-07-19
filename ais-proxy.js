@@ -96,6 +96,17 @@ function ingestAisstream(msg) {
   } else if (msg.MessageType === "ShipStaticData") {
     const sd = (msg.Message && msg.Message.ShipStaticData) || {};
     if (sd.Type != null) cur.typeCode = sd.Type;
+    if (sd.Destination) cur.destination = clean(sd.Destination) || null;
+    if (sd.ImoNumber) cur.imo = String(sd.ImoNumber);
+    if (sd.CallSign) cur.callSign = clean(sd.CallSign) || null;
+    if (typeof sd.MaximumStaticDraught === "number" && sd.MaximumStaticDraught > 0) cur.draughtM = sd.MaximumStaticDraught;
+    const d = sd.Dimension;
+    if (d && (d.A || d.B || d.C || d.D)) {
+      cur.lengthM = (d.A || 0) + (d.B || 0);
+      cur.beamM = (d.C || 0) + (d.D || 0);
+    }
+    const e = sd.Eta;
+    if (e && e.Month) cur.eta = `${String(e.Month).padStart(2, "0")}-${String(e.Day || 0).padStart(2, "0")} ${String(e.Hour || 0).padStart(2, "0")}:${String(e.Minute || 0).padStart(2, "0")}Z`;
   }
   store.set(id, cur);
 }
