@@ -69,6 +69,10 @@ async function handler(req, res) {
   const p = new URL(req.url, "http://localhost").pathname;
   if (p === "/health") return send(res, 200, { ok: true, services: ["aircraft", "vessels", "drones"], ts: Date.now() }, origin);
 
+  // Rate-limit every /api/* route (health stays free for uptime pings).
+  if (p.startsWith("/api/") && rateLimited(clientIp(req)))
+    return send(res, 429, { error: "rate_limited", retryAfterSec: 60 }, origin);
+
   if (p === "/api/drones") {
     const u = new URL(req.url, "http://localhost");
     let mins = parseInt(u.searchParams.get("mins") || "15", 10);
@@ -79,14 +83,12 @@ async function handler(req, res) {
 
   if (p === "/api/drones/track") {
     const u = new URL(req.url, "http://localhost");
-    const id = (u.searchParams.get("id") || "").slice(0, 12);
+    const id = (u.searchParams.get("id") || "").replace(/[^0-9a-fA-F]/g, "").slice(0, 12);
     if (!id) return send(res, 400, { error: "id required" }, origin);
     const t = droneSweep.getTrack(id);
     if (!t) return send(res, 404, { error: "unknown_contact" }, origin);
     return send(res, 200, t, origin);
   }
-
-  if (rateLimited(clientIp(req))) return send(res, 429, { error: "rate_limited", retryAfterSec: 60 }, origin);
 
   if (p === "/api/aircraft" || p === "/api/vessels") {
     const u = new URL(req.url, "http://localhost");
