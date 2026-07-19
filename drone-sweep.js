@@ -146,7 +146,12 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
   return {
     source: "airplanes.live · ADS-B (category B6, UAV type codes, military registry flag)",
     updated: new Date().toISOString(),
-    sweep: { sites: SITES.length, cycles, lastSweepAt, errors: sweepErrors, tracked24h: seen.size },
+    sweep: {
+      sites: SITES.length,
+      visited: cursor % SITES.length || (cycles ? SITES.length : 0), // progress through the current pass
+      cycles, lastSweepAt, errors: sweepErrors, tracked24h: seen.size,
+      intervalSec: SITE_INTERVAL_MS / 1000,
+    },
     count: drones.length,
     counts: {
       uav: byKind.uav || 0,
