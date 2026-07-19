@@ -10,6 +10,7 @@
 // Consumer drones use short-range Remote ID and never appear here.
 
 const { fetchAircraft } = require("./adsb-proxy");
+const archive = require("./archive.js");
 
 // ICAO type designators for uncrewed platforms that often DON'T squawk category B6.
 // Prefix match on MQ-/RQ- series covers Reaper, Predator, Triton, Global Hawk, Shadow…
@@ -90,6 +91,7 @@ function record(a, site, cls) {
     if (prev.track.length === 0 || now - prev.track[prev.track.length - 1][2] > 60000) {
       prev.track.push(point);
       if (prev.track.length > 240) prev.track.shift();   // ~4h of one-minute points
+      archive.record(prev);                              // durable copy (no-op if archive disabled)
     }
     return;
   }
@@ -102,6 +104,7 @@ function record(a, site, cls) {
     site: site[0], country: site[1], siteLat: site[2], siteLon: site[3],
     firstSeen: now, lastSeen: now, track: [point],
   });
+  archive.record(seen.get(a.id));
 }
 
 function prune() {
@@ -126,6 +129,7 @@ async function sweepOnce() {
 function start() {
   if (process.env.SWEEP_DISABLED === "1") { console.log("[sweep] disabled"); return null; }
   console.log(`[sweep] watching ${SITES.length} UAV airspaces, one per ${SITE_INTERVAL_MS / 1000}s`);
+  archive.init();
   sweepOnce();
   const id = setInterval(sweepOnce, SITE_INTERVAL_MS);
   setInterval(() => {
