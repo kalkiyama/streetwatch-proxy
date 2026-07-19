@@ -14,6 +14,9 @@
 // every function becomes a safe no-op, so local dev and CI run without a database.
 
 const RETAIN_DAYS = Number(process.env.ARCHIVE_RETAIN_DAYS || 90);
+// Hard ceiling as well as the time limit: whichever bites first wins. Sized so the
+// table stays well inside a free-tier Postgres (~250 bytes/row incl. indexes).
+const MAX_ROWS = Number(process.env.ARCHIVE_MAX_ROWS || 1200000);
 const URL = process.env.DATABASE_URL || "";
 
 let pool = null;
@@ -94,8 +97,29 @@ async function record(c) {
 async function prune() {
   if (!ready) return;
   try {
+    // 1) age limit
     const r = await pool.query(`DELETE FROM drone_tracks WHERE ts < now() - ($1 || ' days')::interval`, [String(RETAIN_DAYS)]);
     if (r.rowCount) console.log(`[archive] pruned ${r.rowCount} rows older than ${RETAIN_DAYS}d`);
+
+    // 2) size ceiling — drop the oldest rows beyond the cap so storage can never run away
+    const { rows } = await pool.query(`SELECT count(*)::bigint AS c FROM drone_tracks`);
+    const total = Number(rows[0].c);
+    if (total > MAX_ROWS) {
+      const excess = total - MAX_ROWS;
+      const d = await pool.query(
+        `DELETE FROM drone_tracks WHERE id IN (SELECT id FROM drone_tracks ORDER BY ts ASC LIMIT $1)`,
+        [excess]
+      );
+      console.log(`[archive] over cap (${total} > ${MAX_ROWS}) — dropped ${d.rowCount} oldest rows`);
+    }
+
+    // 3) keep the table compact after big deletes
+    if (r.rowCount || total > MAX_ROWS) await pool.query("VACUUM (ANALYZE) drone_tracks").catch(() => {});
+
+    // 4) warn early if storage is filling
+    const sz = await pool.query(`SELECT pg_total_relation_size('drone_tracks') AS bytes`);
+    const mb = Number(sz.rows[0].bytes) / 1e6;
+    if (mb > 350) console.warn(`[archive] table at ${mb.toFixed(0)}MB — approaching a typical 500MB free tier`);
   } catch (e) { console.error("[archive] prune failed:", e.message); }
 }
 
@@ -146,9 +170,17 @@ async function stats() {
     const { rows } = await pool.query(
       `SELECT count(*)::int AS points,
               count(DISTINCT icao)::int AS contacts,
-              min(ts) AS oldest
+              min(ts) AS oldest,
+              pg_total_relation_size('drone_tracks') AS bytes
          FROM drone_tracks`);
-    return { enabled: true, retainDays: RETAIN_DAYS, writes, writeErrors, ...rows[0] };
+    const r = rows[0];
+    return {
+      enabled: true, retainDays: RETAIN_DAYS, maxRows: MAX_ROWS,
+      writes, writeErrors,
+      points: r.points, contacts: r.contacts, oldest: r.oldest,
+      sizeMb: Number((Number(r.bytes) / 1e6).toFixed(1)),
+      capacityUsedPct: Number(((r.points / MAX_ROWS) * 100).toFixed(1)),
+    };
   } catch (e) { return { enabled: true, error: e.message }; }
 }
 
