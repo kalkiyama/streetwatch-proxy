@@ -15,6 +15,7 @@ const http = require("http");
 const adsb = require("./adsb-proxy.js");
 const ais = require("./ais-proxy.js");
 const droneSweep = require("./drone-sweep.js");
+const archive = require("./archive.js");
 
 const PORT = process.env.PORT || 8080;
 const ORIGINS = (process.env.ALLOW_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
@@ -85,10 +86,27 @@ async function handler(req, res) {
     const u = new URL(req.url, "http://localhost");
     const id = (u.searchParams.get("id") || "").replace(/[^0-9a-fA-F]/g, "").slice(0, 12);
     if (!id) return send(res, 400, { error: "id required" }, origin);
-    const t = droneSweep.getTrack(id);
-    if (!t) return send(res, 404, { error: "unknown_contact" }, origin);
-    return send(res, 200, t, origin);
+    const live = droneSweep.getTrack(id);
+    if (live) return send(res, 200, { ...live, source: "live" }, origin);
+    const rows = await archive.track(id);                 // fall back to the durable record
+    if (rows && rows.length)
+      return send(res, 200, { id, source: "archive", track: rows.map((r) => [r.lat, r.lon, +new Date(r.ts)]), points: rows }, origin);
+    return send(res, 404, { error: "unknown_contact" }, origin);
   }
+
+  if (p === "/api/drones/history") {
+    const u = new URL(req.url, "http://localhost");
+    const kind = u.searchParams.get("kind");
+    const rows = await archive.history({
+      days: u.searchParams.get("days"),
+      kind: kind === "uav" || kind === "military" ? kind : null,
+      limit: u.searchParams.get("limit"),
+    });
+    if (!rows) return send(res, 503, { error: "archive_disabled", detail: "No archive configured on this instance." }, origin);
+    return send(res, 200, { source: "StreetWatch archive", retainDays: archive.RETAIN_DAYS, count: rows.length, contacts: rows }, origin);
+  }
+
+  if (p === "/api/archive/stats") return send(res, 200, await archive.stats(), origin);
 
   if (p === "/api/aircraft" || p === "/api/vessels") {
     const u = new URL(req.url, "http://localhost");
