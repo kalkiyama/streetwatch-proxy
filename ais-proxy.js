@@ -556,11 +556,19 @@ async function getVessels(lat, lon, radius) {
     .filter((v) => v.distNm <= radius)
     .sort((a, b) => a.distNm - b.distNm);
   return { source: PROVIDER, upstream: upstreamStatus(), sources: sourceStatus(), coverage: (() => {
-      const parts = [];
-      if (PROVIDERS.has("digitraffic")) parts.push("Baltic Sea (digitraffic)");
-      if (PROVIDERS.has("kystverket")) parts.push("Norwegian coast & Svalbard (Kystverket)");
-      if (PROVIDERS.has("aisstream")) parts.push("global (aisstream)");
-      return parts.join(" + ") + (PROVIDERS.has("aisstream") ? "" : " — regional, not global");
+      // Built from sources that are actually DELIVERING, not merely enabled. An enabled-but-dead
+      // aisstream must not let this string claim "global" — coverage would overstate reality,
+      // which in this app counts as a bug. A dead source is named as down instead.
+      const st = sourceStatus();
+      const parts = [], dead = [];
+      const add = (key, label) => { if (!(key in st)) return; (st[key] === "live" ? parts : dead).push(label); };
+      add("digitraffic", "Baltic Sea (digitraffic)");
+      add("kystverket", "Norwegian coast & Svalbard (Kystverket)");
+      add("aisstream", "global (aisstream)");
+      const globalLive = st.aisstream === "live";
+      return (parts.length ? parts.join(" + ") : "no sources currently delivering")
+        + (globalLive ? "" : " — regional, not global")
+        + (dead.length ? ` · ${dead.join(", ")} currently down` : "");
     })(), updated: new Date().toISOString(), count: vessels.length, vessels };
 }
 
