@@ -69,6 +69,7 @@ async function init() {
       )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_icao_ts ON drone_tracks (icao, ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_ts ON drone_tracks (ts DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_site_ts ON drone_tracks (site, ts DESC)`);
     ready = true;
     console.log(`[archive] connected · retaining ${RETAIN_DAYS} days`);
     prune();
@@ -263,9 +264,18 @@ async function lastSeenBySite({ days = 30 } = {}) {
 
 // Aggregates for the weekly digest. All arithmetic happens HERE, in SQL — the language
 // model is handed finished numbers and asked only to write them up. It never counts.
-async function digestData({ days = 7 } = {}) {
+async function digestData({ days = 7, siteCoords = {} } = {}) {
   if (!isReady()) return null;
   const d = String(days);
+
+  // How far back does the archive actually reach? Without this, a young archive makes every
+  // site look like a dramatic riser ("0 -> 344") when the truth is simply that the previous
+  // window predates the recording. Comparisons are suppressed unless the data supports them.
+  const cov = await pool.query(`SELECT MIN(ts) AS earliest, MAX(ts) AS latest FROM drone_tracks`);
+  const earliest = cov.rows[0] && cov.rows[0].earliest ? new Date(cov.rows[0].earliest) : null;
+  const prevWindowStart = new Date(Date.now() - days * 2 * 86400000);
+  const coversPrevWindow = !!earliest && earliest <= prevWindowStart;
+  const archiveAgeHours = earliest ? Math.round((Date.now() - earliest) / 3600000) : 0;
   const [top, prev, totals] = await Promise.all([
     pool.query(
       `SELECT site, (array_agg(country ORDER BY ts DESC))[1] AS country,
@@ -297,16 +307,41 @@ async function digestData({ days = 7 } = {}) {
     site: r.site, country: r.country,
     contacts: Number(r.contacts), uav: Number(r.uav), military: Number(r.military),
   }));
-  const risers = now
-    .map((r) => ({ site: r.site, prev: prevMap[r.site] || 0, now: r.contacts }))
-    .filter((r) => r.now > r.prev)
-    .sort((a, b) => (b.now - b.prev) - (a.now - a.prev))
-    .slice(0, 5);
-  const newSites = now.filter((r) => !(r.site in prevMap)).slice(0, 5);
+
+  // The sweep polls a 250nm radius, so a site's headline count covers a whole REGION, not the
+  // base itself: 250nm of Eglin AFB contains Hurlburt, Tyndall, Pensacola NAS, Whiting, Maxwell
+  // and Keesler. Reporting that as "Eglin AFB: 344" implies aircraft at Eglin and is false.
+  // Compute a second, tight count within 25nm so both numbers can be shown honestly.
+  const NEAR_NM = 25;
+  await Promise.all(now.map(async (r) => {
+    const c = siteCoords[r.site];
+    if (!c) { r.nearContacts = null; return; }
+    const q = await pool.query(
+      `SELECT COUNT(DISTINCT icao) AS n FROM drone_tracks
+        WHERE site = $1 AND ts > now() - ($2 || ' days')::interval
+          AND 2 * 3440.065 * asin(sqrt(
+                power(sin(radians(lat - $3) / 2), 2) +
+                cos(radians($3)) * cos(radians(lat)) *
+                power(sin(radians(lon - $4) / 2), 2))) <= $5`,
+      [r.site, d, c.lat, c.lon, NEAR_NM]);
+    r.nearContacts = Number(q.rows[0].n);
+  }));
+  // Only claim a rise or a first appearance if the archive actually covered the earlier window.
+  const risers = coversPrevWindow
+    ? now.map((r) => ({ site: r.site, prev: prevMap[r.site] || 0, now: r.contacts }))
+         .filter((r) => r.now > r.prev)
+         .sort((a, b) => (b.now - b.prev) - (a.now - a.prev))
+         .slice(0, 5)
+    : [];
+  const newSites = coversPrevWindow ? now.filter((r) => !(r.site in prevMap)).slice(0, 5) : [];
 
   const t = totals.rows[0] || {};
   return {
     windowDays: days,
+    sweepRadiusNm: 250,
+    nearRadiusNm: NEAR_NM,
+    archiveAgeHours,
+    coversPrevWindow,
     top: now,
     risers,
     newSites,
