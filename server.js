@@ -20,6 +20,13 @@ const webcams = require("./webcams-proxy.js");
 const ai = require("./claude-proxy.js");
 const geometry = require("./geometry.js");
 
+// site name -> centre, used wherever a distance-from-site has to be computed
+function siteCoordMap() {
+  const m = {};
+  (droneSweep.SITES || []).forEach((x) => { m[x[0]] = { lat: x[2], lon: x[3] }; });
+  return m;
+}
+
 const PORT = process.env.PORT || 8080;
 const ORIGINS = (process.env.ALLOW_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
 const WINDOW_MS = 60000;
@@ -185,9 +192,7 @@ async function handler(req, res) {
     const days = Math.min(Math.max(Number(u.searchParams.get("days") || 7), 1), 90);
     // Pass site coordinates so the archive can compute a tight-radius count alongside the
     // 250nm sweep figure — without them, a regional count gets reported as a base count.
-    const siteCoords = {};
-    (droneSweep.SITES || []).forEach((x) => { siteCoords[x[0]] = { lat: x[2], lon: x[3] }; });
-    const data = await archive.digestData({ days, siteCoords });
+    const data = await archive.digestData({ days, siteCoords: siteCoordMap() });
     if (!data) return send(res, 200, { error: "archive_unavailable" }, origin);
     const r = await ai.writeDigest(data);
     return send(res, 200, {
@@ -206,7 +211,7 @@ async function handler(req, res) {
     // Every one of these can be unavailable — no database configured, AIS provider down.
     // A correlation endpoint that throws on a missing input is worse than one that says
     // plainly it has nothing to correlate.
-    const heat = await archive.heat({ days }).catch(() => null);
+    const heat = await archive.heat({ days , siteCoords: siteCoordMap() }).catch(() => null);
     if (!heat) return send(res, 200, { windowDays: days, pairs: [], count: 0, summary: null,
       error: "archive_unavailable",
       disclosure: "Correlation requires the archive, which is not available on this instance." }, origin);
@@ -259,7 +264,7 @@ async function handler(req, res) {
 
   if (p === "/api/drones/heat") {
     const u = new URL(req.url, "http://localhost");
-    const rows = await archive.heat({ days: u.searchParams.get("days") });
+    const rows = await archive.heat({ days: u.searchParams.get("days"), siteCoords: siteCoordMap() });
     if (!rows) return send(res, 503, { error: "archive_disabled" }, origin);
     const sites = Object.fromEntries(droneSweep.SITES.map((x) => [x[0], { lat: x[2], lon: x[3] }]));
     const out = rows
