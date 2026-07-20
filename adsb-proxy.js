@@ -76,6 +76,9 @@ const stats = {
   requests: 0, cacheHits: 0, staleServed: 0, coalesced: 0,
   upstreamCalls: 0, upstreamErrors: 0, upstreamMsTotal: 0,
   upstreamWindow: [],           // timestamps of the last minute of upstream calls
+  recentMs: [],                 // durations of the last 20 calls — a cumulative average
+                                // hides recovery after cold-start (4s TLS handshakes kept
+                                // the lifetime avg looking bad long after calls got fast)
 };
 
 function upstreamRate() {
@@ -102,7 +105,10 @@ function refresh(key, lat, lon, radius) {
       stats.upstreamErrors++;
       throw e;
     } finally {
-      stats.upstreamMsTotal += Date.now() - t0;
+      const ms = Date.now() - t0;
+      stats.upstreamMsTotal += ms;
+      stats.recentMs.push(ms);
+      if (stats.recentMs.length > 20) stats.recentMs.shift();
     }
   })();
   inflight.set(key, p);
