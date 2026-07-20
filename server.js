@@ -17,6 +17,8 @@ const ais = require("./ais-proxy.js");
 const droneSweep = require("./drone-sweep.js");
 const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
+const ai = require("./claude-proxy.js");
+const geometry = require("./geometry.js");
 
 const PORT = process.env.PORT || 8080;
 const ORIGINS = (process.env.ALLOW_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
@@ -137,6 +139,101 @@ async function handler(req, res) {
       sweep: droneSweep.getDrones ? (() => { const s = droneSweep.getDrones(60).sweep;
         return { sites: s.sites, passSize: s.passSize, hotSites: s.hotSites, cycles: s.cycles, errors: s.errors }; })() : null,
       archive: archive.stats ? "use /api/drones/archive-stats" : null,
+    }, origin);
+  }
+
+  // ---- AI endpoints -------------------------------------------------------
+  // Every one of these computes the facts first and asks Claude only for English.
+  // Responses always carry the computed data alongside the prose so a reader can
+  // check the words against the numbers.
+
+  if (p === "/api/ai/status") return send(res, 200, ai.status(), origin);
+
+  if (p === "/api/ai/track") {
+    const u = new URL(req.url, "http://localhost");
+    const icao = String(u.searchParams.get("icao") || "").slice(0, 12);
+    if (!icao) return send(res, 400, { error: "icao required" }, origin);
+    const t = await archive.track(icao, Number(u.searchParams.get("days") || 90));
+    if (!t || !t.points || t.points.length < 3) {
+      return send(res, 200, { icao, geometry: null, narrative: null,
+        note: "Not enough recorded positions to describe a flight profile." }, origin);
+    }
+    const geo = geometry.analyse(t.points.map((x) => ({ lat: x.lat, lon: x.lon, ts: x.ts, altFt: x.alt_ft })));
+    const r = await ai.narrateTrack({ geo, contact: t.contact });
+    return send(res, 200, {
+      icao, contact: t.contact,
+      geometry: geo,                                  // the measured facts
+      narrative: r.ok ? r.text : null,                // the model's English
+      narrativeStatus: r.ok ? (r.cached ? "cached" : "generated") : r.reason,
+      disclosure: "Flight profile measured from recorded ADS-B positions. The written summary is an AI-generated interpretation of those measurements; the measurements themselves are shown above and were computed, not inferred.",
+    }, origin);
+  }
+
+  if (p === "/api/ai/search") {
+    const u = new URL(req.url, "http://localhost");
+    const q = String(u.searchParams.get("q") || "").slice(0, 400);
+    if (!q) return send(res, 400, { error: "q required" }, origin);
+    const r = await ai.parseSearch(q);
+    return send(res, 200, r.ok
+      ? { query: q, filter: r.filter, cached: !!r.cached,
+          disclosure: "Your words were interpreted into the filter shown; the results themselves come from the catalogue and archive, not from a language model." }
+      : { query: q, filter: null, error: r.reason }, origin);
+  }
+
+  if (p === "/api/ai/digest") {
+    const u = new URL(req.url, "http://localhost");
+    const days = Math.min(Math.max(Number(u.searchParams.get("days") || 7), 1), 90);
+    const data = await archive.digestData({ days });
+    if (!data) return send(res, 200, { error: "archive_unavailable" }, origin);
+    const r = await ai.writeDigest(data);
+    return send(res, 200, {
+      ...data,
+      briefing: r.ok ? r.text : null,
+      briefingStatus: r.ok ? (r.cached ? "cached" : "generated") : r.reason,
+      disclosure: "Counts computed from StreetWatch's public archive of ADS-B observations. The briefing is an AI-generated summary of those counts. Aircraft flying with transponders off are not represented, and a change in counts can reflect changes in observation as much as changes in activity.",
+    }, origin);
+  }
+
+  if (p === "/api/ai/correlations") {
+    const u = new URL(req.url, "http://localhost");
+    const days = Math.min(Math.max(Number(u.searchParams.get("days") || 7), 1), 30);
+    // Co-occurrence is COMPUTED here: air activity per airspace vs current marine
+    // contacts of interest, paired by great-circle distance.
+    // Every one of these can be unavailable — no database configured, AIS provider down.
+    // A correlation endpoint that throws on a missing input is worse than one that says
+    // plainly it has nothing to correlate.
+    const heat = await archive.heat({ days }).catch(() => null);
+    if (!heat) return send(res, 200, { windowDays: days, pairs: [], count: 0, summary: null,
+      error: "archive_unavailable",
+      disclosure: "Correlation requires the archive, which is not available on this instance." }, origin);
+    const subs = await ais.getSubSupportFleet().catch(() => ({ vessels: [] }));
+    const usvs = await ais.getUsvFleet().catch(() => ({ vessels: [] }));
+    const marine = [
+      ...(subs.vessels || []).map((v) => ({ ...v, kind: "submarine support vessel" })),
+      ...(usvs.vessels || []).map((v) => ({ ...v, kind: "sea drone" })),
+    ];
+    const SITES = droneSweep.SITES;
+    const pairs = [];
+    const heatSites = Array.isArray(heat) ? heat : (heat.sites || []);
+    heatSites.forEach((h) => {
+      const site = SITES.find((x) => x[0] === h.site);
+      if (!site) return;
+      marine.forEach((v) => {
+        if (!Number.isFinite(v.lat) || !Number.isFinite(v.lon)) return;
+        const dNm = Math.hypot((site[2] - v.lat) * 60,
+          (site[3] - v.lon) * 60 * Math.cos(site[2] * Math.PI / 180));
+        if (dNm <= 150) pairs.push({ site: h.site, airContacts: h.contacts,
+          vessel: v.name || v.id, vesselKind: v.kind, distanceNm: Math.round(dNm), daysApart: 0 });
+      });
+    });
+    pairs.sort((a, b) => a.distanceNm - b.distanceNm);
+    const top = pairs.slice(0, 6);
+    const r = top.length ? await ai.describeCorrelations({ windowDays: days, pairs: top }) : { ok: false, reason: "no_pairs" };
+    return send(res, 200, {
+      windowDays: days, pairs: top, count: pairs.length,
+      summary: r.ok ? r.text : null,
+      summaryStatus: r.ok ? (r.cached ? "cached" : "generated") : r.reason,
+      disclosure: "Co-occurrences in time and space only, computed from two independent public datasets. No causal link is implied or observable. Both datasets are incomplete: aircraft with transponders off and vessels outside AIS coverage do not appear.",
     }, origin);
   }
 
