@@ -442,6 +442,27 @@ let passNo = 0;
 let passSize = 0;
 let tiers = { hot: 0, warm: 0, cold: 0, deep: 0 };
 
+
+// Seed the adaptive tiers from the archive so they survive restarts. Called once at boot,
+// after the archive connects. Failure here is not fatal — the sweep simply starts cold,
+// which is exactly the old behaviour.
+async function seedTiersFromArchive(archive) {
+  if (!archive || typeof archive.lastSeenBySite !== "function") return 0;
+  try {
+    const seen = await archive.lastSeenBySite({ days: 30 });
+    let n = 0;
+    SITES.forEach((site, i) => {
+      const t = seen[site[0]];
+      if (t && t > lastHit[i]) { lastHit[i] = t; n++; }
+    });
+    if (n) console.log(`[sweep] seeded ${n} sites from archive — tiers survive restarts`);
+    return n;
+  } catch (e) {
+    console.warn("[sweep] tier seed failed (starting cold):", e.message);
+    return 0;
+  }
+}
+
 function buildPass() {
   passNo++;
   const now = Date.now();
@@ -578,4 +599,4 @@ function getTrack(id) {
   return { id: s.id, callsign: s.callsign, site: s.site, firstSeen: s.firstSeen, lastSeen: s.lastSeen, track: s.track };
 }
 
-module.exports = { start, getDrones, getTrack, SITES, _seen: seen, _sweepOnce: sweepOnce };
+module.exports = { start, getDrones, getTrack, seedTiersFromArchive, SITES, _buildPass: buildPass, _seen: seen, _sweepOnce: sweepOnce };

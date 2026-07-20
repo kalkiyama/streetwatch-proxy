@@ -164,6 +164,12 @@ function createServer() { return http.createServer(handler); }
 if (require.main === module) {
   if ((process.env.AIS_PROVIDER || "digitraffic") === "aisstream") ais.startAisstream();
   createServer().listen(PORT, () => console.log(`StreetWatch proxy on :${PORT} — origins=${ORIGINS.join(",")} limit=${LIMIT}/min`));
-droneSweep.start();
+
+  // Seed the sweep's adaptive tiers from the archive BEFORE starting, so a redeploy does not
+  // demote every productive airspace back to the slowest rotation. Starting the sweep is not
+  // gated on this succeeding — worst case it begins cold, exactly as it used to.
+  droneSweep.seedTiersFromArchive(archive)
+    .catch(() => {})
+    .finally(() => droneSweep.start());
 }
 module.exports = { createServer };
