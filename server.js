@@ -274,6 +274,13 @@ async function handler(req, res) {
     return send(res, 200, {
       windowDays: Number(u.searchParams.get("days")) || 7,
       maxContacts: max,
+      // maxima per radius so the client can scale colour correctly at whichever it displays
+      maxByRadius: {
+        25: Math.max(1, ...out.map((r) => r.c25 || 0)),
+        100: Math.max(1, ...out.map((r) => r.c100 || 0)),
+        250: max,
+      },
+      radiiNm: [25, 100, 250],
       note: "Intensity reflects ADS-B broadcasters observed by this sweep. Aircraft flying with transponders off are not counted.",
       count: out.length,
       // Radius metadata travels with the data so no surface can display a regional count
@@ -281,6 +288,13 @@ async function handler(req, res) {
       sweepRadiusNm: 250,
       nearRadiusNm: 25,
       maxContacts: max,
+      // maxima per radius so the client can scale colour correctly at whichever it displays
+      maxByRadius: {
+        25: Math.max(1, ...out.map((r) => r.c25 || 0)),
+        100: Math.max(1, ...out.map((r) => r.c100 || 0)),
+        250: max,
+      },
+      radiiNm: [25, 100, 250],
       sites: out.map((r) => ({ ...r, intensity: Number((r.contacts / max).toFixed(3)) })),
     }, origin);
   }

@@ -217,31 +217,46 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
   const lons = names.map((n) => siteCoords[n].lon);
   const NEAR_NM = 25;
 
+  // Counts at three radii in ONE pass. The distance is computed once in a CTE and reused by
+  // FILTER clauses, so switching radius in the UI needs no refetch — and the three numbers
+  // side by side are the actual finding: 350 aircraft within 250nm of Eglin but 37 within
+  // 25nm says something true that neither figure says alone.
   const sql = names.length
-    ? `SELECT t.site,
-              max(t.country) AS country,
-              count(*)::int                                                   AS points,
-              count(DISTINCT t.icao)::int                                     AS contacts,
-              count(DISTINCT t.icao) FILTER (WHERE t.kind = 'uav')::int       AS uav,
-              count(DISTINCT t.icao) FILTER (WHERE t.kind = 'military')::int  AS military,
-              count(DISTINCT t.icao) FILTER (
-                WHERE 2 * 3440.065 * asin(sqrt(
-                        power(sin(radians(t.lat - s.slat) / 2), 2) +
-                        cos(radians(s.slat)) * cos(radians(t.lat)) *
-                        power(sin(radians(t.lon - s.slon) / 2), 2))) <= ${NEAR_NM}
-              )::int                                                          AS near_contacts,
-              max(t.ts) AS last_seen,
-              round(EXTRACT(EPOCH FROM (max(t.ts) - min(t.ts))) / 3600.0)::int AS span_hours
-         FROM drone_tracks t
-         LEFT JOIN unnest($2::text[], $3::float8[], $4::float8[]) AS s(site, slat, slon)
-                ON s.site = t.site
-        WHERE t.ts > now() - ($1 || ' days')::interval AND t.site IS NOT NULL
-        GROUP BY t.site
-        ORDER BY count(DISTINCT t.icao) DESC`
+    ? `WITH j AS (
+         SELECT t.icao, t.kind, t.site, t.country, t.ts,
+                2 * 3440.065 * asin(sqrt(
+                  power(sin(radians(t.lat - s.slat) / 2), 2) +
+                  cos(radians(s.slat)) * cos(radians(t.lat)) *
+                  power(sin(radians(t.lon - s.slon) / 2), 2))) AS dist_nm
+           FROM drone_tracks t
+           LEFT JOIN unnest($2::text[], $3::float8[], $4::float8[]) AS s(site, slat, slon)
+                  ON s.site = t.site
+          WHERE t.ts > now() - ($1 || ' days')::interval AND t.site IS NOT NULL
+       )
+       SELECT site,
+              max(country) AS country,
+              count(*)::int AS points,
+              count(DISTINCT icao)::int AS contacts,
+              count(DISTINCT icao) FILTER (WHERE kind = 'uav')::int AS uav,
+              count(DISTINCT icao) FILTER (WHERE kind = 'military')::int AS military,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25)::int AS c25,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND kind = 'uav')::int AS uav25,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND kind = 'military')::int AS mil25,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 100)::int AS c100,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 100 AND kind = 'uav')::int AS uav100,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 100 AND kind = 'military')::int AS mil100,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25)::int AS near_contacts,
+              max(ts) AS last_seen,
+              round(EXTRACT(EPOCH FROM (max(ts) - min(ts))) / 3600.0)::int AS span_hours
+         FROM j
+        GROUP BY site
+        ORDER BY count(DISTINCT icao) DESC`
     : `SELECT site, max(country) AS country, count(*)::int AS points,
               count(DISTINCT icao)::int AS contacts,
               count(DISTINCT icao) FILTER (WHERE kind = 'uav')::int AS uav,
               count(DISTINCT icao) FILTER (WHERE kind = 'military')::int AS military,
+              NULL::int AS c25, NULL::int AS uav25, NULL::int AS mil25,
+              NULL::int AS c100, NULL::int AS uav100, NULL::int AS mil100,
               NULL::int AS near_contacts,
               max(ts) AS last_seen,
               round(EXTRACT(EPOCH FROM (max(ts) - min(ts))) / 3600.0)::int AS span_hours
