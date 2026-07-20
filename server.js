@@ -106,6 +106,24 @@ async function handler(req, res) {
     return send(res, 200, { source: "StreetWatch archive", retainDays: archive.RETAIN_DAYS, count: rows.length, contacts: rows }, origin);
   }
 
+  if (p === "/api/drones/heat") {
+    const u = new URL(req.url, "http://localhost");
+    const rows = await archive.heat({ days: u.searchParams.get("days") });
+    if (!rows) return send(res, 503, { error: "archive_disabled" }, origin);
+    const sites = Object.fromEntries(droneSweep.SITES.map((x) => [x[0], { lat: x[2], lon: x[3] }]));
+    const out = rows
+      .filter((r) => sites[r.site])
+      .map((r) => ({ ...r, lat: sites[r.site].lat, lon: sites[r.site].lon }));
+    const max = out.reduce((m, r) => Math.max(m, r.contacts), 0) || 1;
+    return send(res, 200, {
+      windowDays: Number(u.searchParams.get("days")) || 7,
+      maxContacts: max,
+      note: "Intensity reflects ADS-B broadcasters observed by this sweep. Aircraft flying with transponders off are not counted.",
+      count: out.length,
+      sites: out.map((r) => ({ ...r, intensity: Number((r.contacts / max).toFixed(3)) })),
+    }, origin);
+  }
+
   if (p === "/api/archive/stats") return send(res, 200, await archive.stats(), origin);
 
   if (p === "/api/aircraft" || p === "/api/vessels") {

@@ -153,6 +153,28 @@ const SITES = [
   ["Palanquero", "Colombia", 5.480, -74.660],
   ["Comalapa", "El Salvador", 13.440, -89.060],
   ["Hato / Curacao", "Curacao", 12.190, -68.960],
+  // ---- Conflict-adjacent airspaces ----
+  // NOTE: aircraft engaged in combat generally fly with transponders off. What is visible
+  // here is the surrounding logistics and surveillance traffic operating from nearby bases,
+  // plus civil aviation. Presence of a site is not a claim about who is fighting whom.
+  ["Rzeszow / Ukraine border", "Poland", 50.110, 22.020],
+  ["Iasi / Ukraine border", "Romania", 47.180, 27.620],
+  ["Chisinau approach", "Moldova", 46.930, 28.930],
+  ["Black Sea south", "International waters", 43.500, 32.000],
+  ["Beirut / Levant coast", "Lebanon", 33.820, 35.490],
+  ["Golan / north Israel", "Israel", 33.100, 35.600],
+  ["Red Sea north", "International waters", 20.500, 38.500],
+  ["Bab-el-Mandeb", "International waters", 12.600, 43.400],
+  ["Port Sudan", "Sudan", 19.580, 37.220],
+  ["Bamako / Sahel", "Mali", 12.530, -7.950],
+  ["Lake Chad basin", "Chad", 13.100, 14.500],
+  ["Goma / Great Lakes", "DR Congo", -1.670, 29.240],
+  ["Yerevan / Caucasus", "Armenia", 40.150, 44.400],
+  ["Taiwan Strait", "International waters", 24.500, 119.500],
+  ["South China Sea north", "International waters", 16.500, 114.000],
+  ["Korea DMZ approach", "South Korea", 37.900, 126.900],
+  ["Kashmir / Srinagar", "India", 34.000, 74.780],
+  ["Caribbean south", "International waters", 12.800, -70.500],
 ];
 
 const seen = new Map();     // id -> sighting record
