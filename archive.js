@@ -384,8 +384,14 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
   const newSites = coversPrevWindow ? now.filter((r) => !(r.site in prevMap)).slice(0, 5) : [];
 
   const t = totals.rows[0] || {};
+  // The two orderings answer different questions, and where they DISAGREE is the finding:
+  // a big 250nm count with a small 25nm count means busy regional airspace, not a busy base.
+  const topNear = now.filter((r) => r.nearContacts != null)
+    .slice().sort((a, b) => b.nearContacts - a.nearContacts).slice(0, 5);
+
   return {
     windowDays: days,
+    topNear,
     sweepRadiusNm: 250,
     nearRadiusNm: NEAR_NM,
     archiveAgeHours,
