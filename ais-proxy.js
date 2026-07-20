@@ -146,10 +146,42 @@ function classifyUsv(v) {
   return { usv: false, usvConfidence: null };
 }
 
+
+// ---------------------------------------------------------------------------
+// Submarine support vessels
+//
+// Submarines themselves are NOT trackable. AIS is VHF radio and radio does not
+// propagate through seawater, so a submerged vessel — military, research or tourist —
+// transmits nothing. Surfaced boats usually transit dark as well.
+//
+// What IS observable is the surface infrastructure that supports them: tenders, rescue
+// ships, research vessels carrying submersibles, and cable/salvage ships. Their movements
+// indicate where submarine activity is being SUPPORTED. That is an inference about surface
+// logistics, never a detection of a submarine, and the API says so.
+const SUB_SUPPORT = /\b(SUBMARINE\s?(TENDER|RESCUE)|USNS\s+\w+|EMORY\s?S\.?\s?LAND|FRANK\s?CABLE|BELOS|SWIFT\s?RESCUE|MYSTIC|ATLAS|LOPEROV|KOMMUNA|IGOR\s?BELOUSOV|JIAN\s?GONG|CHANG\s?DAO|ANTEO|FORBIN|SEAHORSE\s?STANDARD|ALVIN|ATLANTIS|NAUTILE|POURQUOI\s?PAS|OCEAN\s?INFINITY|ARMADA\s?7|GLOMAR|SUBSEA|DIVE\s?SUPPORT|SATURATION\s?DIVE)\b/i;
+
+// AIS ship types that commonly carry or support submersibles
+const SUB_SUPPORT_TYPES = new Set([
+  35,   // military operations
+  50,   // pilot vessel
+  51,   // search and rescue
+  53,   // port tender
+  58,   // medical / special operations
+]);
+
+function classifySubSupport(v) {
+  const name = String(v.name || "") + " " + String(v.callSign || "");
+  if (SUB_SUPPORT.test(name)) return { subSupport: true, subSupportConfidence: "named" };
+  // type alone is weak — require a substantial hull so harbour launches do not qualify
+  if (SUB_SUPPORT_TYPES.has(Number(v.typeCode)) && Number(v.lengthM) >= 60)
+    return { subSupport: true, subSupportConfidence: "possible" };
+  return { subSupport: false, subSupportConfidence: null };
+}
+
 function aisstreamFleet() {
   return Array.from(store.values())
     .filter((v) => typeof v.lat === "number" && typeof v.lon === "number")
-    .map((v) => Object.assign({}, v, classifyUsv(v)));
+    .map((v) => Object.assign({}, v, classifyUsv(v), classifySubSupport(v)));
 }
 function parseBoxes() {
   const raw = (process.env.AIS_BBOX || "").trim();
@@ -271,10 +303,31 @@ async function getUsvFleet(lat, lon) {
   return {
     source: PROVIDER, upstream: upstreamStatus(), updated: new Date().toISOString(),
     note: "Most military USVs broadcast no AIS at all. This shows the research and commercial fleet that does, plus small unidentified hulls flagged as possible.",
+    submarineNote: "Submarines cannot be tracked. AIS is VHF radio, which does not travel through seawater, so no submerged vessel of any kind transmits a position. The support-vessel layer shows surface ships associated with submarine operations — infrastructure, not submarines.",
     count: out.length,
     confirmed: out.filter((v) => v.usvConfidence === "confirmed").length,
     possible: out.filter((v) => v.usvConfidence === "possible").length,
     vessels: out.slice(0, 300),
+  };
+}
+
+
+// Surface vessels associated with submarine operations. NOT submarines — see the note.
+async function getSubSupportFleet(lat, lon) {
+  const fleet = await getFleet();
+  const hasPos = Number.isFinite(lat) && Number.isFinite(lon);
+  let out = fleet.filter((v) => v.subSupport);
+  if (hasPos) {
+    out = out.map((v) => ({ ...v, distNm: nmBetween(lat, lon, v.lat, v.lon) }))
+             .sort((a, b) => a.distNm - b.distNm);
+  }
+  return {
+    source: PROVIDER, upstream: upstreamStatus(), updated: new Date().toISOString(),
+    note: "Submarines cannot be tracked by AIS — VHF radio does not propagate through seawater, so no submerged vessel transmits a position. These are SURFACE support ships (tenders, rescue vessels, submersible motherships). Their presence indicates where submarine activity is being supported; it is not a submarine detection.",
+    count: out.length,
+    named: out.filter((v) => v.subSupportConfidence === "named").length,
+    possible: out.filter((v) => v.subSupportConfidence === "possible").length,
+    vessels: out.slice(0, 200),
   };
 }
 
@@ -322,4 +375,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`AIS proxy on :${PORT} — provider=${PROVIDER}`));
 }
 
-module.exports = { classifyUsv, getUsvFleet, normalizeDigitraffic, ingestAisstream, aisstreamFleet, getVessels, startAisstream, createServer, handler, store, upstreamStatus, _upstreamState: upstreamState };
+module.exports = { classifyUsv, classifySubSupport, getUsvFleet, getSubSupportFleet, normalizeDigitraffic, ingestAisstream, aisstreamFleet, getVessels, startAisstream, createServer, handler, store, upstreamStatus, _upstreamState: upstreamState };

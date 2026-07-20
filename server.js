@@ -106,6 +106,12 @@ async function handler(req, res) {
     return send(res, 200, { source: "StreetWatch archive", retainDays: archive.RETAIN_DAYS, count: rows.length, contacts: rows }, origin);
   }
 
+  if (p === "/api/subsupport") {
+    const u = new URL(req.url, "http://localhost");
+    return send(res, 200, await ais.getSubSupportFleet(
+      Number(u.searchParams.get("lat")), Number(u.searchParams.get("lon"))), origin);
+  }
+
   if (p === "/api/usv") {
     const u = new URL(req.url, "http://localhost");
     const lat = Number(u.searchParams.get("lat"));
