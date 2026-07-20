@@ -176,35 +176,46 @@ async function parseSearch(query) {
 // ---------------------------------------------------------------------------
 // 3. Weekly digest — deltas computed by SQL, model writes the briefing
 // ---------------------------------------------------------------------------
-const DIGEST_SYSTEM = `You write a short factual briefing about changes in observed military and UAV air activity.
+const DIGEST_SYSTEM = `You write a short factual briefing about observed military and UAV air activity.
 
 You are given counts that were ALREADY COMPUTED from a public archive. Use only those numbers.
 
-Write 120-180 words, plain prose, no bullet points or headings. Lead with the largest change.
-Name airspaces and figures precisely.
+CRITICAL — what the counts mean. Each airspace is polled over a 250 nautical mile radius, so a
+site's headline figure counts aircraft across a WHOLE REGION, not aircraft at that base. Within
+250nm of Eglin AFB, for example, lie many other airfields. You must never write "N contacts at
+X" or "X recorded N contacts". Write "within 250nm of X" or "in the region around X". Where a
+25nm figure is supplied, that one may be described as close to the base itself.
+
+Write 120-180 words of PLAIN PROSE ONLY. No markdown, no "#" headings, no title, no bold, no
+bullet points. Begin with the first sentence of the briefing itself.
 
 You must include, in your own words, that these counts come only from aircraft broadcasting
-ADS-B, so aircraft with transponders switched off are not represented, and that a change in
-counts may reflect changes in observation as easily as changes in activity.
+ADS-B, so aircraft with transponders switched off are not represented, and that a difference in
+counts may reflect observation coverage as easily as activity.
+
+If told the archive does not yet cover the comparison window, say plainly that no
+week-on-week comparison is possible yet and do not describe anything as new, rising or a first
+appearance.
 
 Never infer intent, mission, escalation, or geopolitical meaning. Report what was observed.`;
 
-async function writeDigest({ windowDays, top, risers, newSites, totals }) {
+async function writeDigest({ windowDays, top, risers, newSites, totals, sweepRadiusNm = 250,
+                             nearRadiusNm = 25, coversPrevWindow = true, archiveAgeHours = null }) {
   const user =
 `Archive window: last ${windowDays} days.
-Totals: ${totals.contacts} contacts, ${totals.uav} UAV, ${totals.military} military, across ${totals.sites} airspaces.
+Each figure below counts DISTINCT aircraft seen within ${sweepRadiusNm}nm of the named site — a region, not the base itself.
+Totals: ${totals.contacts} aircraft, ${totals.uav} UAV, ${totals.military} military, across ${totals.sites} airspaces.
 
-Busiest airspaces (contacts this window):
-${top.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts} contacts, ${s.uav} UAV, ${s.military} military`).join("\n") || "- none"}
+Busiest regions (aircraft within ${sweepRadiusNm}nm of each site):
+${top.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts} aircraft, ${s.uav} UAV, ${s.military} military` +
+    (s.nearContacts != null ? `; ${s.nearContacts} of them within ${nearRadiusNm}nm of the site itself` : "")).join("\n") || "- none"}
 
-Largest increases vs the previous window:
-${risers.map((s) => `- ${s.site}: ${s.prev} -> ${s.now} contacts`).join("\n") || "- none"}
-
-Airspaces producing their first recorded contacts:
-${newSites.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts}`).join("\n") || "- none"}
+${coversPrevWindow
+  ? `Largest increases vs the previous window:\n${risers.map((s) => `- ${s.site}: ${s.prev} -> ${s.now}`).join("\n") || "- none"}\n\nRegions producing their first recorded aircraft:\n${newSites.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts}`).join("\n") || "- none"}`
+  : `NO COMPARISON AVAILABLE: the archive only reaches back ${archiveAgeHours != null ? archiveAgeHours + " hours" : "less than the comparison window"}, which is shorter than the previous ${windowDays}-day window. Do not describe anything as new, rising, or a first appearance. State that week-on-week comparison is not yet possible.`}
 
 Write the briefing.`;
-  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, risers, newSites, totals }) });
+  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, risers, newSites, totals, coversPrevWindow }) });
 }
 
 // ---------------------------------------------------------------------------

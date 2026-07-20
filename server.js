@@ -183,7 +183,11 @@ async function handler(req, res) {
   if (p === "/api/ai/digest") {
     const u = new URL(req.url, "http://localhost");
     const days = Math.min(Math.max(Number(u.searchParams.get("days") || 7), 1), 90);
-    const data = await archive.digestData({ days });
+    // Pass site coordinates so the archive can compute a tight-radius count alongside the
+    // 250nm sweep figure — without them, a regional count gets reported as a base count.
+    const siteCoords = {};
+    (droneSweep.SITES || []).forEach((x) => { siteCoords[x[0]] = { lat: x[2], lon: x[3] }; });
+    const data = await archive.digestData({ days, siteCoords });
     if (!data) return send(res, 200, { error: "archive_unavailable" }, origin);
     const r = await ai.writeDigest(data);
     return send(res, 200, {
