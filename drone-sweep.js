@@ -447,7 +447,7 @@ const lastPoll = new Array(SITES.length).fill(0);   // when we last POLLED a sit
 let queue = [];
 let passNo = 0;
 let passSize = 0;
-let tiers = { hot: 0, warm: 0, cold: 0, deep: 0 };
+let tiers = { hot: 0, hotPolled: 0, hotDeferred: 0, warm: 0, cold: 0, deep: 0 };
 
 
 // Seed the adaptive tiers from the archive so they survive restarts. Called once at boot,
@@ -500,8 +500,11 @@ function buildPass() {
   // first and let the rest slip a pass. Without this the same sites would win every time.
   // RESERVE keeps a few slots for breadth so cold and deep never stall completely.
   const RESERVE = Number(process.env.SWEEP_RESERVE || 8);
+  const trueHot = hot.length;            // record BEFORE trimming, or we report the cap back
+  let hotDeferred = 0;
   if (hot.length > MAX_PASS - RESERVE) {
     hot.sort((a, b) => lastPoll[a] - lastPoll[b]);
+    hotDeferred = hot.length - Math.max(1, MAX_PASS - RESERVE);
     hot.length = Math.max(1, MAX_PASS - RESERVE);
   }
   const room = Math.max(0, MAX_PASS - hot.length);
@@ -514,7 +517,7 @@ function buildPass() {
   while (ci < extra.length) out.push(extra[ci++]);
   queue = out.length ? out : SITES.map((_, i) => i);
   passSize = queue.length;
-  tiers = { hot: hot.length, warm: warm.length, cold: cold.length, deep: deep.length };
+  tiers = { hot: trueHot, hotPolled: hot.length, hotDeferred, warm: warm.length, cold: cold.length, deep: deep.length };
   return passSize;
 }
 let cycles = 0, sweepErrors = 0, lastSweepAt = null;
@@ -599,7 +602,9 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
       sites: SITES.length,
       visited: Math.max(0, (queue.length ? passSize - queue.length : passSize)),
       passSize,
-      hotSites: tiers.hot,
+      hotSites: tiers.hot,                 // airspaces actually active
+      hotPolled: tiers.hotPolled,          // how many fitted in this pass
+      hotDeferred: tiers.hotDeferred,      // active but slipped to the next pass
       warmSites: tiers.warm,
       coldSites: tiers.cold,
       deepCells: tiers.deep,
