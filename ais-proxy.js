@@ -253,8 +253,13 @@ function startKystverket() {
       }
       if (buf.length > 65536) buf = "";               // never let a lineless stream grow the buffer
     });
+    // A dying socket fires error AND close AND sometimes end. Guarding on the socket
+    // identity makes teardown idempotent — without it one disconnect scheduled several
+    // reconnects, each spawning its own socket: the connect/disconnect churn in the logs,
+    // and a slow connection leak.
+    const mySock = sock;
     const down = () => {
-      if (!sock) return;
+      if (sock !== mySock) return;            // already torn down / superseded
       sock.destroy(); sock = null; buf = "";
       kvState.connected = false;
       const wait = Math.min(3000 * 2 ** kvState.retries, 60000);
