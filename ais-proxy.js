@@ -91,7 +91,7 @@ const KV_HOST = process.env.KYSTVERKET_HOST || "153.44.253.27";
 const KV_PORT = Number(process.env.KYSTVERKET_PORT || 5631);
 const nordicStore = new Map();          // mmsi -> vessel, same shape as aisstream store
 let kvState = { connected: false, lastMsgAt: 0, retries: 0 };
-let kvCounters = { lines: 0, decoded: 0, bad: 0 };
+let kvCounters = { lines: 0, decoded: 0, skipped: 0, bad: 0 };
 
 // six-bit armor: ASCII -> 6-bit value
 function sixbitVal(ch) {
@@ -199,7 +199,14 @@ function applyDecoded(dec) {
 const kvParts = new Map();              // seq -> { total, got: Map(num -> payload), at }
 function handleAivdmLine(line) {
   kvCounters.lines++;
-  if (!line.startsWith("!AIVDM") && !line.startsWith("!BSVDM") && !line.startsWith("!ABVDM")) return;
+  // Kystverket prefixes sentences with NMEA 4.0 tag blocks — "\s:2573445,c:...*5B\!BSVDM,..."
+  // carrying source/timestamp metadata. Rejecting lines that don't START with "!" silently
+  // discarded ~99% of the feed (the 60s counters showed it: lines=2365 decoded=15 bad=0).
+  // Strip everything before the sentence itself.
+  const bang = line.indexOf("!");
+  if (bang < 0) return;
+  if (bang > 0) line = line.slice(bang);
+  if (!/^!..VDM/.test(line) && !/^!..VDO/.test(line)) return;
   const star = line.indexOf("*");
   const body = star > 0 ? line.slice(0, star) : line;
   const f = body.split(",");
@@ -226,6 +233,7 @@ function handleAivdmLine(line) {
   try {
     const dec = decodeAivdmPayload(bits);
     if (dec) { applyDecoded(dec); kvCounters.decoded++; kvState.lastMsgAt = Date.now(); }
+    else kvCounters.skipped++;               // valid sentence, type we deliberately ignore (e.g. 4)
   } catch { kvCounters.bad++; }
 }
 
@@ -260,8 +268,8 @@ function startKystverket() {
   };
   connect();
   setInterval(() => {
-    console.log(`[kystverket] 60s: lines=${kvCounters.lines} decoded=${kvCounters.decoded} bad=${kvCounters.bad} fleet=${nordicStore.size}`);
-    kvCounters = { lines: 0, decoded: 0, bad: 0 };
+    console.log(`[kystverket] 60s: lines=${kvCounters.lines} decoded=${kvCounters.decoded} skipped=${kvCounters.skipped} bad=${kvCounters.bad} fleet=${nordicStore.size}`);
+    kvCounters = { lines: 0, decoded: 0, skipped: 0, bad: 0 };
     const cut = Date.now() - 10 * 60 * 1000;
     for (const [k, v] of nordicStore) if (v.lastSeen < cut) nordicStore.delete(k);
   }, 60000);
