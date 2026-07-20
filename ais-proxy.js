@@ -110,6 +110,14 @@ function ingestAisstream(msg) {
   }
   store.set(id, cur);
 }
+// upstream health: "live" once messages flow, "down" while we cannot hold a connection
+let upstreamState = { connected: false, lastMsgAt: 0, lastCloseCode: null, retries: 0 };
+function upstreamStatus() {
+  if (PROVIDER !== "aisstream") return "live";
+  const fresh = Date.now() - upstreamState.lastMsgAt < 120000;
+  return upstreamState.connected && fresh ? "live" : "down";
+}
+
 function aisstreamFleet() {
   return Array.from(store.values()).filter((v) => typeof v.lat === "number" && typeof v.lon === "number");
 }
@@ -143,6 +151,7 @@ function startAisstream() {
       console.log("[aisstream] connected");
       lastMsgAt = Date.now();
       retries = 0;
+      upstreamState.connected = true;
       // NOTE: whole-globe bbox is a firehose; narrow it in production.
       const boxes = parseBoxes();
       if (boxes.length === 1 && boxes[0][0][0] === -90) console.log("[aisstream] subscribing worldwide (set AIS_BBOX to narrow)");
@@ -153,6 +162,7 @@ function startAisstream() {
     try { ws.binaryType = "arraybuffer"; } catch {}
     ws.addEventListener("message", async (ev) => {
       lastMsgAt = Date.now(); msgCount++;
+      upstreamState.lastMsgAt = lastMsgAt;   // drives upstreamStatus()
       try {
         // aisstream sends JSON in binary frames; the runtime may surface them as
         // string, Buffer, ArrayBuffer, or Blob. Decode all of them before parsing.
@@ -176,6 +186,9 @@ function startAisstream() {
       const code = (ev && ev.code) || 0;
       const reason = ((ev && ev.reason) || "").toString().slice(0, 200);
       retries++;
+      upstreamState.connected = false;
+      upstreamState.lastCloseCode = code;
+      upstreamState.retries = retries;
       const wait = Math.min(3000 * Math.pow(2, retries - 1), 60000);   // 3s, 6s, 12s … capped at 60s
       console.warn(`[aisstream] closed code=${code}${reason ? " reason=" + reason : ""} — retry #${retries} in ${wait / 1000}s`);
       if (code === 1008 || (reason && /unauthor|invalid|api ?key|forbidden|limit/i.test(reason)))
@@ -211,7 +224,7 @@ async function getVessels(lat, lon, radius) {
     .map((v) => ({ ...v, distNm: nmBetween(lat, lon, v.lat, v.lon) }))
     .filter((v) => v.distNm <= radius)
     .sort((a, b) => a.distNm - b.distNm);
-  return { source: PROVIDER, updated: new Date().toISOString(), count: vessels.length, vessels };
+  return { source: PROVIDER, upstream: upstreamStatus(), updated: new Date().toISOString(), count: vessels.length, vessels };
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +257,7 @@ async function handler(req, res) {
         .map((v) => ({ ...v, distNm: nmBetween(lat, lon, v.lat, v.lon) }))
         .filter((v) => v.distNm <= radius)
         .sort((a, b) => a.distNm - b.distNm);
-      return send(res, 200, { query: { lat, lon, radius }, source: PROVIDER, updated: new Date().toISOString(), count: vessels.length, vessels });
+      return send(res, 200, { query: { lat, lon, radius }, source: PROVIDER, upstream: upstreamStatus(), updated: new Date().toISOString(), count: vessels.length, vessels });
     } catch (e) {
       return send(res, 502, { error: "upstream_unavailable", detail: String((e && e.message) || e) });
     }
@@ -258,4 +271,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`AIS proxy on :${PORT} — provider=${PROVIDER}`));
 }
 
-module.exports = { normalizeDigitraffic, ingestAisstream, aisstreamFleet, getVessels, startAisstream, createServer, handler, store };
+module.exports = { normalizeDigitraffic, ingestAisstream, aisstreamFleet, getVessels, startAisstream, createServer, handler, store, upstreamStatus, _upstreamState: upstreamState };
