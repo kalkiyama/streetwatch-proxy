@@ -260,4 +260,59 @@ async function lastSeenBySite({ days = 30 } = {}) {
   return out;
 }
 
-module.exports = { init, record, flush, history, track, heat, stats, lastSeenBySite, isReady, RETAIN_DAYS };
+
+// Aggregates for the weekly digest. All arithmetic happens HERE, in SQL — the language
+// model is handed finished numbers and asked only to write them up. It never counts.
+async function digestData({ days = 7 } = {}) {
+  if (!isReady()) return null;
+  const d = String(days);
+  const [top, prev, totals] = await Promise.all([
+    pool.query(
+      `SELECT site, (array_agg(country ORDER BY ts DESC))[1] AS country,
+              COUNT(DISTINCT icao) AS contacts,
+              COUNT(DISTINCT icao) FILTER (WHERE kind = 'uav') AS uav,
+              COUNT(DISTINCT icao) FILTER (WHERE kind = 'military') AS military
+         FROM drone_tracks
+        WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
+        GROUP BY site ORDER BY contacts DESC LIMIT 8`, [d]),
+    pool.query(
+      `SELECT site, COUNT(DISTINCT icao) AS contacts
+         FROM drone_tracks
+        WHERE ts > now() - ($1 || ' days')::interval * 2
+          AND ts <= now() - ($1 || ' days')::interval
+          AND site IS NOT NULL
+        GROUP BY site`, [d]),
+    pool.query(
+      `SELECT COUNT(DISTINCT icao) AS contacts,
+              COUNT(DISTINCT icao) FILTER (WHERE kind = 'uav') AS uav,
+              COUNT(DISTINCT icao) FILTER (WHERE kind = 'military') AS military,
+              COUNT(DISTINCT site) AS sites
+         FROM drone_tracks
+        WHERE ts > now() - ($1 || ' days')::interval`, [d]),
+  ]);
+  const prevMap = {};
+  prev.rows.forEach((r) => { prevMap[r.site] = Number(r.contacts); });
+
+  const now = top.rows.map((r) => ({
+    site: r.site, country: r.country,
+    contacts: Number(r.contacts), uav: Number(r.uav), military: Number(r.military),
+  }));
+  const risers = now
+    .map((r) => ({ site: r.site, prev: prevMap[r.site] || 0, now: r.contacts }))
+    .filter((r) => r.now > r.prev)
+    .sort((a, b) => (b.now - b.prev) - (a.now - a.prev))
+    .slice(0, 5);
+  const newSites = now.filter((r) => !(r.site in prevMap)).slice(0, 5);
+
+  const t = totals.rows[0] || {};
+  return {
+    windowDays: days,
+    top: now,
+    risers,
+    newSites,
+    totals: { contacts: Number(t.contacts || 0), uav: Number(t.uav || 0),
+              military: Number(t.military || 0), sites: Number(t.sites || 0) },
+  };
+}
+
+module.exports = { init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS };
