@@ -43,38 +43,146 @@ const MAX_TRACKED = 3000;              // memory bound
 
 // Publicly known UAV airspaces (mirrors the UAV Watch catalog entries).
 const SITES = [
-  ["Phoenix–Luke AFB", "United States", 33.535, -112.383],
-  ["Vegas–Creech/Nellis", "United States", 36.587, -115.673],
-  ["Edwards AFB–Plant 42", "United States", 34.905, -117.884],
+  // ---- North America ----
+  ["Creech / Nellis", "United States", 36.587, -115.673],
+  ["Edwards AFB / Plant 42", "United States", 34.905, -117.884],
   ["China Lake NAWS", "United States", 35.688, -117.690],
   ["Yuma Proving Ground", "United States", 32.900, -114.400],
-  ["Grand Forks AFB", "United States", 47.960, -97.400],
-  ["Naval Base Ventura", "United States", 34.120, -119.120],
+  ["Luke AFB / Phoenix", "United States", 33.535, -112.383],
   ["Fort Huachuca", "United States", 31.580, -110.340],
+  ["Holloman AFB", "United States", 32.850, -106.110],
+  ["White Sands Range", "United States", 32.380, -106.480],
+  ["Cannon AFB", "United States", 34.380, -103.320],
+  ["Beale AFB", "United States", 39.140, -121.440],
+  ["Naval Base Ventura", "United States", 34.120, -119.120],
+  ["Fort Bliss / El Paso", "United States", 31.850, -106.380],
+  ["Corpus Christi NAS", "United States", 27.690, -97.290],
+  ["Eglin AFB", "United States", 30.480, -86.520],
+  ["Hurlburt Field", "United States", 30.430, -86.690],
+  ["Robins AFB", "United States", 32.640, -83.590],
+  ["Cherry Point MCAS", "United States", 34.900, -76.880],
+  ["Norfolk / Oceana", "United States", 36.820, -76.030],
+  ["Dover AFB", "United States", 39.130, -75.470],
+  ["Wright-Patterson AFB", "United States", 39.830, -84.050],
+  ["Offutt AFB", "United States", 41.120, -95.910],
+  ["Tinker AFB", "United States", 35.410, -97.390],
+  ["Grand Forks AFB", "United States", 47.960, -97.400],
+  ["Eielson AFB", "United States", 64.670, -147.100],
+  ["JB Elmendorf-Richardson", "United States", 61.250, -149.810],
+  ["JB Pearl Harbor-Hickam", "United States", 21.330, -157.920],
+  ["CFB Cold Lake", "Canada", 54.400, -110.280],
   ["CFB Goose Bay", "Canada", 53.320, -60.420],
+  ["CFB Comox", "Canada", 49.710, -124.890],
+
+  // ---- Europe ----
   ["RAF Waddington", "United Kingdom", 53.170, -0.520],
-  ["Amari AB", "Estonia", 59.260, 24.210],
+  ["RAF Lakenheath / Mildenhall", "United Kingdom", 52.410, 0.560],
+  ["RAF Fairford", "United Kingdom", 51.680, -1.790],
+  ["RAF Lossiemouth", "United Kingdom", 57.710, -3.340],
+  ["RAF Brize Norton", "United Kingdom", 51.750, -1.580],
+  ["Ramstein AB", "Germany", 49.440, 7.600],
+  ["Spangdahlem AB", "Germany", 49.970, 6.690],
+  ["Leeuwarden AB", "Netherlands", 53.220, 5.760],
+  ["Kleine Brogel AB", "Belgium", 51.170, 5.470],
+  ["Istres-Le Tube", "France", 43.520, 4.920],
+  ["Aviano AB", "Italy", 46.030, 12.600],
   ["Sigonella NAS", "Italy", 37.400, 14.920],
+  ["Decimomannu AB", "Italy", 39.350, 8.970],
+  ["Rota NS", "Spain", 36.650, -6.350],
+  ["Moron AB", "Spain", 37.170, -5.620],
+  ["Beja AB", "Portugal", 38.080, -7.930],
+  ["Keflavik", "Iceland", 63.990, -22.610],
+  ["Orland AS", "Norway", 63.700, 9.600],
+  ["Evenes", "Norway", 68.490, 16.680],
+  ["Lulea-Kallax", "Sweden", 65.540, 22.120],
+  ["Rovaniemi", "Finland", 66.560, 25.830],
+  ["Amari AB", "Estonia", 59.260, 24.210],
+  ["Siauliai AB", "Lithuania", 55.890, 23.390],
   ["Miroslawiec", "Poland", 53.400, 16.080],
+  ["Powidz AB", "Poland", 52.380, 17.850],
+  ["Mihail Kogalniceanu", "Romania", 44.360, 28.490],
+  ["Graf Ignatievo", "Bulgaria", 42.290, 24.710],
   ["Larissa AB", "Greece", 39.650, 22.460],
-  ["Incirlik AB", "Türkiye", 37.000, 35.430],
+  ["Souda Bay", "Greece", 35.530, 24.150],
+  ["RAF Akrotiri", "Cyprus", 34.590, 32.990],
+
+  // ---- Middle East ----
+  ["Incirlik AB", "Turkiye", 37.000, 35.430],
+  ["Al Udeid AB", "Qatar", 25.120, 51.320],
   ["Al Dhafra AB", "UAE", 24.250, 54.550],
   ["Ali Al Salem AB", "Kuwait", 29.350, 47.520],
+  ["Prince Sultan AB", "Saudi Arabia", 24.060, 47.580],
+  ["Muwaffaq Salti AB", "Jordan", 31.830, 36.780],
+  ["Isa AB", "Bahrain", 25.920, 50.590],
   ["Palmachim AB", "Israel", 31.900, 34.690],
+  ["Nevatim AB", "Israel", 31.210, 35.010],
+  ["Erbil", "Iraq", 36.240, 43.960],
+  ["Ain al-Asad", "Iraq", 33.790, 42.440],
   ["Bagram area", "Afghanistan", 34.950, 69.260],
-  ["Jamnagar AFS", "India", 22.470, 70.010],
-  ["Chabua AFS", "India", 27.460, 95.120],
-  ["Kadena AB", "Japan", 26.350, 127.770],
-  ["Osan AB", "South Korea", 37.090, 127.030],
-  ["Andersen AFB", "Guam", 13.580, 144.920],
+
+  // ---- Africa ----
   ["Chabelley Airfield", "Djibouti", 11.520, 42.920],
   ["Air Base 201", "Niger", 16.970, 8.000],
+  ["Manda Bay", "Kenya", -2.250, 40.910],
+  ["Baledogle", "Somalia", 2.620, 44.860],
+  ["Cairo West", "Egypt", 30.120, 30.920],
+  ["Benghazi coast", "Libya", 32.100, 20.270],
+
+  // ---- Asia ----
+  ["Kadena AB", "Japan", 26.350, 127.770],
+  ["Misawa AB", "Japan", 40.700, 141.370],
+  ["Yokota AB", "Japan", 35.750, 139.350],
+  ["Iwakuni MCAS", "Japan", 34.140, 132.240],
+  ["Osan AB", "South Korea", 37.090, 127.030],
+  ["Kunsan AB", "South Korea", 35.900, 126.620],
+  ["Andersen AFB", "Guam", 13.580, 144.920],
+  ["Clark AB", "Philippines", 15.190, 120.550],
+  ["U-Tapao", "Thailand", 12.680, 101.000],
+  ["Diego Garcia", "BIOT", -7.310, 72.410],
+  ["Jamnagar AFS", "India", 22.470, 70.010],
+  ["Chabua AFS", "India", 27.460, 95.120],
+  ["Hindon AFS", "India", 28.710, 77.350],
+  ["Nur Khan AB", "Pakistan", 33.620, 73.100],
+
+  // ---- Oceania & South America ----
   ["Woomera Range", "Australia", -31.140, 136.800],
   ["RAAF Tindal", "Australia", -14.520, 132.380],
+  ["RAAF Amberley", "Australia", -27.640, 152.710],
+  ["RAAF Edinburgh", "Australia", -34.700, 138.620],
+  ["RNZAF Ohakea", "New Zealand", -40.210, 175.390],
+  ["Palanquero", "Colombia", 5.480, -74.660],
+  ["Comalapa", "El Salvador", 13.440, -89.060],
+  ["Hato / Curacao", "Curacao", 12.190, -68.960],
 ];
 
 const seen = new Map();     // id -> sighting record
-let cursor = 0;
+
+// Adaptive rotation. With ~100 airspaces a plain round-robin at 15s would revisit each
+// one only every ~25 min. Instead: any site that produced a contact in the last 24h is
+// "hot" and gets visited every pass; quiet sites are checked once every COLD_EVERY passes.
+// Upstream load is unchanged either way — it depends on the interval, not the site count.
+const COLD_EVERY = Number(process.env.SWEEP_COLD_EVERY || 3);
+const lastHit = new Array(SITES.length).fill(0);
+let queue = [];
+let passNo = 0;
+let passSize = 0;
+
+function buildPass() {
+  passNo++;
+  const now = Date.now();
+  const hot = [], cold = [];
+  SITES.forEach((_, i) => ((now - lastHit[i] < 24 * 60 * 60 * 1000) ? hot : cold).push(i));
+  const slice = cold.filter((_, k) => k % COLD_EVERY === passNo % COLD_EVERY);
+  // interleave so hot and cold are spread through the pass rather than front-loaded
+  const out = [];
+  const step = slice.length ? Math.max(1, Math.round(hot.length / slice.length)) : Infinity;
+  let ci = 0;
+  hot.forEach((h, i) => { out.push(h); if ((i + 1) % step === 0 && ci < slice.length) out.push(slice[ci++]); });
+  while (ci < slice.length) out.push(slice[ci++]);
+  queue = out.length ? out : SITES.map((_, i) => i);
+  passSize = queue.length;
+  return passSize;
+}
 let cycles = 0, sweepErrors = 0, lastSweepAt = null;
 
 function record(a, site, cls) {
@@ -113,12 +221,14 @@ function prune() {
 }
 
 async function sweepOnce() {
-  const site = SITES[cursor % SITES.length];
-  cursor++;
-  if (cursor % SITES.length === 0) { cycles++; prune(); }
+  if (queue.length === 0) { cycles++; buildPass(); if (cycles > 0) prune(); }
+  const idx = queue.shift();
+  const site = SITES[idx];
   try {
     const data = await fetchAircraft(site[2], site[3], RADIUS_NM);
-    (data.aircraft || []).forEach((a) => { const cls = classify(a); if (cls) record(a, site, cls); });
+    let hits = 0;
+    (data.aircraft || []).forEach((a) => { const cls = classify(a); if (cls) { record(a, site, cls); hits++; } });
+    if (hits) lastHit[idx] = Date.now();      // keep this airspace in the fast rotation
     lastSweepAt = Date.now();
   } catch (e) {
     sweepErrors++;
@@ -152,7 +262,9 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
     updated: new Date().toISOString(),
     sweep: {
       sites: SITES.length,
-      visited: cursor % SITES.length || (cycles ? SITES.length : 0), // progress through the current pass
+      visited: Math.max(0, (queue.length ? passSize - queue.length : passSize)),
+      passSize,
+      hotSites: lastHit.filter((t) => Date.now() - t < 24 * 60 * 60 * 1000).length,
       cycles, lastSweepAt, errors: sweepErrors, tracked24h: seen.size,
       intervalSec: SITE_INTERVAL_MS / 1000,
     },
