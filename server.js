@@ -131,6 +131,8 @@ async function handler(req, res) {
         upstreamErrors: a.upstreamErrors || 0,
         upstreamCallsLastMin: adsb.upstreamRate ? adsb.upstreamRate() : null,
         upstreamAvgMs: a.upstreamCalls ? Math.round(a.upstreamMsTotal / a.upstreamCalls) : null,
+        upstreamRecentAvgMs: a.recentMs && a.recentMs.length
+          ? Math.round(a.recentMs.reduce((x, y) => x + y, 0) / a.recentMs.length) : null,
       },
       sweep: droneSweep.getDrones ? (() => { const s = droneSweep.getDrones(60).sweep;
         return { sites: s.sites, passSize: s.passSize, hotSites: s.hotSites, cycles: s.cycles, errors: s.errors }; })() : null,
