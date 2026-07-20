@@ -194,6 +194,30 @@ async function track(icao, days = 90) {
   return rows;
 }
 
+
+// Activity per airspace over a window — the basis of the heat map.
+// Intensity is measured from our own observations, not asserted from outside sources.
+async function heat({ days = 7 } = {}) {
+  if (!ready) return null;
+  const d = Math.min(Math.max(Number(days) || 7, 1), RETAIN_DAYS);
+  const { rows } = await pool.query(
+    `SELECT site,
+            max(country) AS country,
+            count(*)::int                              AS points,
+            count(DISTINCT icao)::int                  AS contacts,
+            count(DISTINCT icao) FILTER (WHERE kind = 'uav')::int      AS uav,
+            count(DISTINCT icao) FILTER (WHERE kind = 'military')::int AS military,
+            max(ts) AS last_seen,
+            round(EXTRACT(EPOCH FROM (max(ts) - min(ts))) / 3600.0)::int AS span_hours
+       FROM drone_tracks
+      WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
+      GROUP BY site
+      ORDER BY count(DISTINCT icao) DESC`,
+    [String(d)]
+  );
+  return rows;
+}
+
 async function stats() {
   if (!ready) return { enabled: false };
   try {
@@ -216,4 +240,4 @@ async function stats() {
 
 const isReady = () => ready;
 
-module.exports = { init, record, flush, history, track, stats, isReady, RETAIN_DAYS };
+module.exports = { init, record, flush, history, track, heat, stats, isReady, RETAIN_DAYS };
