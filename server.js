@@ -271,6 +271,11 @@ async function handler(req, res) {
       maxContacts: max,
       note: "Intensity reflects ADS-B broadcasters observed by this sweep. Aircraft flying with transponders off are not counted.",
       count: out.length,
+      // Radius metadata travels with the data so no surface can display a regional count
+      // as if it were a base count. maxContacts lets the client scale colour logarithmically.
+      sweepRadiusNm: 250,
+      nearRadiusNm: 25,
+      maxContacts: max,
       sites: out.map((r) => ({ ...r, intensity: Number((r.contacts / max).toFixed(3)) })),
     }, origin);
   }

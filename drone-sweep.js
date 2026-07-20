@@ -522,6 +522,16 @@ function buildPass() {
 }
 let cycles = 0, sweepErrors = 0, lastSweepAt = null;
 
+
+// Distance from an aircraft to a polling site, in nautical miles.
+// Needed because sites are polled over a 250nm radius and those radii overlap heavily:
+// one aircraft over Alabama sits inside the circles of Eglin, Maxwell, Keesler and more.
+function distNm(lat, lon, sLat, sLon) {
+  const dy = (lat - sLat) * 60;
+  const dx = (lon - sLon) * 60 * Math.cos(((lat + sLat) / 2) * Math.PI / 180);
+  return Math.hypot(dx, dy);
+}
+
 function record(a, site, cls) {
   const now = Date.now();
   const prev = seen.get(a.id);
@@ -530,7 +540,16 @@ function record(a, site, cls) {
     prev.lastSeen = now;
     prev.lat = a.lat; prev.lon = a.lon;
     prev.altFt = a.altFt; prev.groundSpeedKt = a.groundSpeedKt; prev.headingDeg = a.headingDeg;
-    prev.site = site[0]; prev.country = site[1];
+    // Attribute to the NEAREST site, not the most recent one to poll. Previously this line
+    // overwrote site unconditionally, so an aircraft 20nm from Maxwell could be filed under
+    // Eglin purely because Eglin's turn in the rotation came later — arbitrary attribution,
+    // and the same aircraft landing under several sites inflated every overlapping circle.
+    const dHere = distNm(a.lat, a.lon, site[2], site[3]);
+    if (prev.siteDistNm == null || dHere < prev.siteDistNm) {
+      prev.site = site[0]; prev.country = site[1];
+      prev.siteLat = site[2]; prev.siteLon = site[3];
+      prev.siteDistNm = Math.round(dHere * 10) / 10;
+    }
     prev.callsign = a.callsign || prev.callsign;
     prev.kind = cls.kind; prev.why = cls.why; prev.confidence = cls.confidence;
     if (prev.track.length === 0 || now - prev.track[prev.track.length - 1][2] > 60000) {
@@ -547,6 +566,7 @@ function record(a, site, cls) {
     registration: a.registration || null, desc: a.desc || null, military: a.military ?? null,
     lat: a.lat, lon: a.lon, altFt: a.altFt, groundSpeedKt: a.groundSpeedKt, headingDeg: a.headingDeg,
     site: site[0], country: site[1], siteLat: site[2], siteLon: site[3],
+    siteDistNm: Math.round(distNm(a.lat, a.lon, site[2], site[3]) * 10) / 10,
     firstSeen: now, lastSeen: now, track: [point],
   });
   archive.record(seen.get(a.id));
