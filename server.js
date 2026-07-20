@@ -16,6 +16,7 @@ const adsb = require("./adsb-proxy.js");
 const ais = require("./ais-proxy.js");
 const droneSweep = require("./drone-sweep.js");
 const archive = require("./archive.js");
+const webcams = require("./webcams-proxy.js");
 
 const PORT = process.env.PORT || 8080;
 const ORIGINS = (process.env.ALLOW_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
@@ -110,6 +111,15 @@ async function handler(req, res) {
     const u = new URL(req.url, "http://localhost");
     return send(res, 200, await ais.getSubSupportFleet(
       Number(u.searchParams.get("lat")), Number(u.searchParams.get("lon"))), origin);
+  }
+
+  if (p === "/api/webcams") {
+    const u = new URL(req.url, "http://localhost");
+    return send(res, 200, await webcams.getWebcams(
+      Number(u.searchParams.get("lat")),
+      Number(u.searchParams.get("lon")),
+      Number(u.searchParams.get("radius") || 50),
+      Number(u.searchParams.get("limit") || 12)), origin);
   }
 
   if (p === "/api/usv") {
