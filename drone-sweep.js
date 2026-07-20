@@ -434,9 +434,16 @@ if (SWEEP_DEEP) SITES.push(...DEEP_SITES);
 //   COLD  never seen anything -> every COLD_EVERY passes
 const WARM_EVERY = Number(process.env.SWEEP_WARM_EVERY || 3);
 const COLD_EVERY = Number(process.env.SWEEP_COLD_EVERY || 10);
-const HOT_MS = 24 * 60 * 60 * 1000;
+// "Hot" should mean ACTIVE, not "saw something yesterday". Hot sites are polled every
+// pass, so hot count sets the floor on the whole pass duration: 87 hot sites forced a
+// 22-minute refresh no matter what the cap said. A 6h window keeps that set meaningful
+// and lets the cap do its job; sites seen 6-24h ago fall to warm and are still revisited
+// every ~3 passes, so nothing is forgotten — it is just polled at a rate matching its
+// actual activity.
+const HOT_MS = Number(process.env.SWEEP_HOT_HOURS || 6) * 60 * 60 * 1000;
 const WARM_MS = 30 * 24 * 60 * 60 * 1000;
 const lastHit = new Array(SITES.length).fill(0);
+const lastPoll = new Array(SITES.length).fill(0);   // when we last POLLED a site (not when it produced)
 let queue = [];
 let passNo = 0;
 let passSize = 0;
@@ -488,6 +495,15 @@ function buildPass() {
   // deep, so trimming from the end sheds the least valuable work first: deep cells slip a
   // cycle before cold sites do, and hot sites are never dropped at all.
   let extra = warmSlice.concat(coldSlice, deepSlice);
+
+  // Safety net: if hot alone exceeds the cap, poll the least-recently-polled hot sites
+  // first and let the rest slip a pass. Without this the same sites would win every time.
+  // RESERVE keeps a few slots for breadth so cold and deep never stall completely.
+  const RESERVE = Number(process.env.SWEEP_RESERVE || 8);
+  if (hot.length > MAX_PASS - RESERVE) {
+    hot.sort((a, b) => lastPoll[a] - lastPoll[b]);
+    hot.length = Math.max(1, MAX_PASS - RESERVE);
+  }
   const room = Math.max(0, MAX_PASS - hot.length);
   if (extra.length > room) extra = extra.slice(0, room);
   // interleave so the pass is not front-loaded with hot sites
@@ -541,6 +557,7 @@ function prune() {
 async function sweepOnce() {
   if (queue.length === 0) { cycles++; buildPass(); if (cycles > 0) prune(); }
   const idx = queue.shift();
+  if (idx != null) lastPoll[idx] = Date.now();    // fairness bookkeeping for the hot rotation
   const site = SITES[idx];
   try {
     const data = await fetchAircraft(site[2], site[3], RADIUS_NM);
