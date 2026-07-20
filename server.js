@@ -168,8 +168,12 @@ if (require.main === module) {
   // Seed the sweep's adaptive tiers from the archive BEFORE starting, so a redeploy does not
   // demote every productive airspace back to the slowest rotation. Starting the sweep is not
   // gated on this succeeding — worst case it begins cold, exactly as it used to.
-  droneSweep.seedTiersFromArchive(archive)
-    .catch(() => {})
+  // Order matters: the archive must be connected before tiers can be seeded from it.
+  // droneSweep.start() also calls archive.init(), which is idempotent.
+  archive.init()
+    .catch((e) => console.warn("[boot] archive init failed:", e.message))
+    .then(() => droneSweep.seedTiersFromArchive(archive))
+    .catch((e) => console.warn("[boot] tier seed failed:", e.message))
     .finally(() => droneSweep.start());
 }
 module.exports = { createServer };

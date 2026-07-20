@@ -31,6 +31,7 @@ let writes = 0, writeErrors = 0, flushes = 0;
 let buffer = [];
 
 async function init() {
+  if (ready) return true;                  // idempotent: safe to call from both boot paths
   if (!URL) { console.log("[archive] disabled (no DATABASE_URL) — sweep stays in memory only"); return false; }
   let Pool;
   try { ({ Pool } = require("pg")); }
