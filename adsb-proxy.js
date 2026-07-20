@@ -20,7 +20,15 @@ const http = require("http");
 const PORT = process.env.PORT || 8787;
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
 const UPSTREAM = process.env.ADSB_UPSTREAM || "https://api.airplanes.live/v2/point";
-const CACHE_MS = 4000;         // serve cached result for 4s (respects rate limits)
+// Fresh window raised 4s -> 20s. The binding constraint is airplanes.live's ~1 req/s
+// guidance: at 4s each distinct viewed airport cost 0.25 req/s (only ~4 concurrent
+// airports before exceeding it); at 20s it is 0.05 req/s (~20 airports). Aircraft move
+// ~2nm in 20s — imperceptible at 60-250nm radar scale.
+const CACHE_MS = Number(process.env.ADSB_CACHE_MS || 20000);
+// Stale-while-revalidate: past CACHE_MS but within STALE_MS, serve the old data
+// immediately and refresh in the background. Users never wait on upstream unless the
+// entry is truly dead. Staleness is bounded at 60s and marked on the payload.
+const STALE_MS = Number(process.env.ADSB_STALE_MS || 60000);
 const MAX_RADIUS_NM = 250;     // upstream hard cap
 
 const cache = new Map();       // key -> { t, data }
@@ -63,25 +71,62 @@ function normalize(upstream) {
   return { source: "airplanes.live", updated: new Date().toISOString(), count: aircraft.length, aircraft };
 }
 
-async function fetchAircraft(lat, lon, radius) {
-  const key = `${lat.toFixed(2)}:${lon.toFixed(2)}:${radius}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.t < CACHE_MS) return hit.data;
-  if (inflight.has(key)) return inflight.get(key);
+// metrics, exported for /metrics
+const stats = {
+  requests: 0, cacheHits: 0, staleServed: 0, coalesced: 0,
+  upstreamCalls: 0, upstreamErrors: 0, upstreamMsTotal: 0,
+  upstreamWindow: [],           // timestamps of the last minute of upstream calls
+};
 
+function upstreamRate() {
+  const cutoff = Date.now() - 60000;
+  stats.upstreamWindow = stats.upstreamWindow.filter((t) => t > cutoff);
+  return stats.upstreamWindow.length;
+}
+
+function refresh(key, lat, lon, radius) {
   const p = (async () => {
     const url = `${UPSTREAM}/${lat}/${lon}/${radius}`;
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "streetwatch-adsb-proxy/1.0" },
-    });
-    if (!res.ok) throw new Error(`upstream ${res.status}`);
-    const data = normalize(await res.json());
-    cache.set(key, { t: Date.now(), data });
-    return data;
+    const t0 = Date.now();
+    stats.upstreamCalls++;
+    stats.upstreamWindow.push(t0);
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": "streetwatch-adsb-proxy/1.0" },
+      });
+      if (!res.ok) throw new Error(`upstream ${res.status}`);
+      const data = normalize(await res.json());
+      cache.set(key, { t: Date.now(), data });
+      return data;
+    } catch (e) {
+      stats.upstreamErrors++;
+      throw e;
+    } finally {
+      stats.upstreamMsTotal += Date.now() - t0;
+    }
   })();
-
   inflight.set(key, p);
-  try { return await p; } finally { inflight.delete(key); }
+  p.finally(() => inflight.delete(key)).catch(() => {});
+  return p;
+}
+
+async function fetchAircraft(lat, lon, radius) {
+  const key = `${lat.toFixed(2)}:${lon.toFixed(2)}:${radius}`;
+  stats.requests++;
+  const hit = cache.get(key);
+  const age = hit ? Date.now() - hit.t : Infinity;
+
+  if (age < CACHE_MS) { stats.cacheHits++; return hit.data; }        // fresh
+
+  if (age < STALE_MS) {
+    // stale-but-usable: serve now, refresh in the background
+    stats.staleServed++;
+    if (!inflight.has(key)) refresh(key, lat, lon, radius);
+    return { ...hit.data, stale: true, ageSec: Math.round(age / 1000) };
+  }
+
+  if (inflight.has(key)) { stats.coalesced++; return inflight.get(key); }
+  return refresh(key, lat, lon, radius);
 }
 
 function send(res, status, obj) {
@@ -125,4 +170,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`ADS-B proxy on :${PORT} -> ${UPSTREAM}`));
 }
 
-module.exports = { normalize, fetchAircraft, createServer, handler };
+module.exports = { stats, upstreamRate, normalize, fetchAircraft, createServer, handler };
