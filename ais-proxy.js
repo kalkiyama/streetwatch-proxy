@@ -113,6 +113,15 @@ function ingestAisstream(msg) {
 function aisstreamFleet() {
   return Array.from(store.values()).filter((v) => typeof v.lat === "number" && typeof v.lon === "number");
 }
+function parseBoxes() {
+  const raw = (process.env.AIS_BBOX || "").trim();
+  if (!raw) return [[[-90, -180], [90, 180]]];          // default: whole planet
+  const boxes = raw.split(";").map((b) => b.split(",").map(Number))
+    .filter((v) => v.length === 4 && v.every(Number.isFinite))
+    .map(([a, b, c, d]) => [[a, b], [c, d]]);
+  return boxes.length ? boxes : [[[-90, -180], [90, 180]]];
+}
+
 function startAisstream() {
   if (!AISSTREAM_KEY) { console.warn("[aisstream] AISSTREAM_KEY not set — no data will arrive"); return; }
   if (typeof WebSocket === "undefined") { console.warn("[aisstream] needs Node >= 21 global WebSocket"); return; }
@@ -123,14 +132,22 @@ function startAisstream() {
     console.log(`[aisstream] 60s: msgs=${msgCount} badParse=${badCount} fleet=${store.size}`);
     msgCount = 0; badCount = 0;
   }, 60000);
+  let current = null;
+  process.on("SIGTERM", () => {                 // release the key before the new instance connects
+    try { if (current) { current.onclose = null; current.close(1000, "shutdown"); } } catch {}
+  });
   const connect = () => {
     const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
+    current = ws;
     ws.addEventListener("open", () => {
       console.log("[aisstream] connected");
       lastMsgAt = Date.now();
       retries = 0;
       // NOTE: whole-globe bbox is a firehose; narrow it in production.
-      ws.send(JSON.stringify({ APIKey: AISSTREAM_KEY, BoundingBoxes: [[[-90, -180], [90, 180]]],
+      const boxes = parseBoxes();
+      if (boxes.length === 1 && boxes[0][0][0] === -90) console.log("[aisstream] subscribing worldwide (set AIS_BBOX to narrow)");
+      else console.log(`[aisstream] subscribing to ${boxes.length} bounding box(es)`);
+      ws.send(JSON.stringify({ APIKey: AISSTREAM_KEY, BoundingBoxes: boxes,
         FilterMessageTypes: ["PositionReport", "ShipStaticData"] }));
     });
     try { ws.binaryType = "arraybuffer"; } catch {}
