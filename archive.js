@@ -65,11 +65,14 @@ async function init() {
         type_code   TEXT,
         descr       TEXT,
         site        TEXT,
+        site_dist_nm DOUBLE PRECISION,
         country     TEXT
       )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_icao_ts ON drone_tracks (icao, ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_ts ON drone_tracks (ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_site_ts ON drone_tracks (site, ts DESC)`);
+    // existing deployments predate this column
+    await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS site_dist_nm DOUBLE PRECISION`);
     ready = true;
     console.log(`[archive] connected · retaining ${RETAIN_DAYS} days`);
     prune();
@@ -94,6 +97,7 @@ function record(c) {
     Number.isFinite(c.headingDeg) ? c.headingDeg : null,
     c.kind, c.confidence || null, c.callsign || null, c.typeCode || null,
     c.desc || null, c.site || null, c.country || null,
+    Number.isFinite(c.siteDistNm) ? c.siteDistNm : null,
   ]);
   if (buffer.length >= FLUSH_MAX) flush();
 }
@@ -103,7 +107,7 @@ async function flush() {
   if (!ready || buffer.length === 0) return;
   const batch = buffer;
   buffer = [];
-  const COLS = 14;
+  const COLS = 15;   // keep in step with the INSERT column list below
   const values = batch.map((_, i) => {
     const b = i * COLS;
     const ph = [];
@@ -114,7 +118,7 @@ async function flush() {
   try {
     await pool.query(
       `INSERT INTO drone_tracks
-        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country)
+        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country, site_dist_nm)
        VALUES ${values}`,
       batch.flat()
     );
@@ -209,6 +213,8 @@ async function heat({ days = 7 } = {}) {
             count(DISTINCT icao)::int                  AS contacts,
             count(DISTINCT icao) FILTER (WHERE kind = 'uav')::int      AS uav,
             count(DISTINCT icao) FILTER (WHERE kind = 'military')::int AS military,
+            count(DISTINCT icao) FILTER (WHERE site_dist_nm <= 25)::int AS near_contacts,
+            round(min(site_dist_nm)::numeric, 1)::float AS nearest_nm,
             max(ts) AS last_seen,
             round(EXTRACT(EPOCH FROM (max(ts) - min(ts))) / 3600.0)::int AS span_hours
        FROM drone_tracks
