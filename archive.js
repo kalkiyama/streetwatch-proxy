@@ -240,4 +240,23 @@ async function stats() {
 
 const isReady = () => ready;
 
-module.exports = { init, record, flush, history, track, heat, stats, isReady, RETAIN_DAYS };
+
+// Last time each site produced a contact, used to seed the sweep's adaptive tiers on boot.
+// Without this the rotation is only adaptive within one process lifetime: every deploy or
+// idle restart wipes it, every site falls back to cold, and airspaces that were productive
+// yesterday get rediscovered on the slowest rotation.
+async function lastSeenBySite({ days = 30 } = {}) {
+  if (!isReady()) return {};
+  const { rows } = await pool.query(
+    `SELECT site, MAX(ts) AS last_ts
+       FROM drone_tracks
+      WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
+      GROUP BY site`,
+    [String(days)]
+  );
+  const out = {};
+  rows.forEach((r) => { out[r.site] = new Date(r.last_ts).getTime(); });
+  return out;
+}
+
+module.exports = { init, record, flush, history, track, heat, stats, lastSeenBySite, isReady, RETAIN_DAYS };
