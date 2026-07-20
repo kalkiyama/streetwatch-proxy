@@ -449,7 +449,14 @@ let tiers = { hot: 0, warm: 0, cold: 0, deep: 0 };
 async function seedTiersFromArchive(archive) {
   if (!archive || typeof archive.lastSeenBySite !== "function") return 0;
   try {
+    if (!archive.isReady()) {
+      // This was a silent no-op once: seeding ran before archive.init() had connected,
+      // returned nothing, and logged nothing. Say so rather than pretending it worked.
+      console.warn("[sweep] archive not ready at seed time — tiers start cold");
+      return 0;
+    }
     const seen = await archive.lastSeenBySite({ days: 30 });
+    if (!Object.keys(seen).length) { console.log("[sweep] archive has no site history yet — tiers start cold"); return 0; }
     let n = 0;
     SITES.forEach((site, i) => {
       const t = seen[site[0]];
