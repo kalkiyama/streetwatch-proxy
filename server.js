@@ -106,6 +106,13 @@ async function handler(req, res) {
     return send(res, 200, { source: "StreetWatch archive", retainDays: archive.RETAIN_DAYS, count: rows.length, contacts: rows }, origin);
   }
 
+  if (p === "/api/usv") {
+    const u = new URL(req.url, "http://localhost");
+    const lat = Number(u.searchParams.get("lat"));
+    const lon = Number(u.searchParams.get("lon"));
+    return send(res, 200, await ais.getUsvFleet(lat, lon), origin);
+  }
+
   if (p === "/api/drones/heat") {
     const u = new URL(req.url, "http://localhost");
     const rows = await archive.heat({ days: u.searchParams.get("days") });
