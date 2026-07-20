@@ -64,8 +64,10 @@ async function getWebcams(lat, lon, radiusKm = 50, limit = 12) {
   const hit = cache.get(ck);
   if (hit && Date.now() - hit.at < TTL_MS) return { ...hit.payload, cached: true };
 
+  // `nearby` already returns results by proximity. An explicit sortKey=distance is NOT a
+  // valid value and made Windy reject the whole request with HTTP 400.
   const url = `${BASE}?nearby=${lat.toFixed(4)},${lon.toFixed(4)},${r}` +
-    `&limit=${n}&offset=0&include=images,location,player&sortKey=distance&sortDirection=asc`;
+    `&limit=${n}&offset=0&include=images,location,player`;
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 8000);
@@ -75,11 +77,15 @@ async function getWebcams(lat, lon, radiusKm = 50, limit = 12) {
       signal: ctrl.signal,
     });
     if (!res.ok) {
-      // Surface the reason rather than an empty list that implies "no cameras here"
+      // Surface the reason rather than an empty list that implies "no cameras here".
+      // Include Windy's own message: discarding it once turned a one-line parameter bug
+      // into guesswork, since "HTTP 400" alone says nothing about WHICH parameter.
+      let upstream = "";
+      try { upstream = (await res.text()).slice(0, 300); } catch { /* body already consumed */ }
       const detail = res.status === 401 ? "Windy rejected the API key"
         : res.status === 429 ? "Windy rate limit reached"
         : `Windy returned HTTP ${res.status}`;
-      return { configured: true, error: detail, count: 0, webcams: [] };
+      return { configured: true, error: detail, upstreamDetail: upstream || null, count: 0, webcams: [] };
     }
     const json = await res.json();
     const list = Array.isArray(json.webcams) ? json.webcams : [];
