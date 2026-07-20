@@ -118,8 +118,38 @@ function upstreamStatus() {
   return upstreamState.connected && fresh ? "live" : "down";
 }
 
+
+// ---------------------------------------------------------------------------
+// Uncrewed surface vessels (sea drones)
+//
+// Same honesty problem as aircraft: most military USVs broadcast nothing at all.
+// What IS observable is the research and commercial fleet — Saildrone, DriX, Mariner,
+// Sea Machines and similar — which carry AIS because they share crowded water with
+// crewed shipping. So this identifies the visible population, not the whole one.
+//
+// Signals, in order of reliability:
+//   1. Operator naming — these fleets use consistent, distinctive vessel names
+//   2. AIS ship type 0/90-99 ("other"/unspecified) combined with a very small hull
+//   3. Small hull (<25m) holding a slow, steady offshore transit for a long period
+const USV_NAME = /\b(SAILDRONE|SD\s?\d{3,4}|DRIX|USV|UNCREWED|UNMANNED|MARINER\s?\d|SEA\s?MACHINES|OCIUS|BLUEBOTTLE|SEA\s?HUNTER|DEVIL\s?RAY|MARTAC|GHOST\s?FLEET|SEATRAC|SPRAY\s?GLIDER|WAVE\s?GLIDER|AUTONAUT|C-?WORKER|MAXLIMER|ECHO\s?VOYAGER)\b/i;
+
+function classifyUsv(v) {
+  const name = String(v.name || "") + " " + String(v.callSign || "");
+  if (USV_NAME.test(name)) return { usv: true, usvConfidence: "confirmed" };
+
+  const small = Number.isFinite(v.lengthM) && v.lengthM > 0 && v.lengthM <= 25;
+  const unspecified = v.typeCode == null || v.typeCode === 0 || (v.typeCode >= 90 && v.typeCode <= 99);
+  const slowSteady = Number.isFinite(v.sogKt) && v.sogKt > 0.5 && v.sogKt <= 8;
+
+  // a small, type-unspecified hull making steady way is a candidate, never a claim
+  if (small && unspecified && slowSteady) return { usv: true, usvConfidence: "possible" };
+  return { usv: false, usvConfidence: null };
+}
+
 function aisstreamFleet() {
-  return Array.from(store.values()).filter((v) => typeof v.lat === "number" && typeof v.lon === "number");
+  return Array.from(store.values())
+    .filter((v) => typeof v.lat === "number" && typeof v.lon === "number")
+    .map((v) => Object.assign({}, v, classifyUsv(v)));
 }
 function parseBoxes() {
   const raw = (process.env.AIS_BBOX || "").trim();
@@ -227,6 +257,27 @@ async function getVessels(lat, lon, radius) {
   return { source: PROVIDER, upstream: upstreamStatus(), updated: new Date().toISOString(), count: vessels.length, vessels };
 }
 
+// Global sea-drone watch: every USV candidate currently in the fleet, nearest first when
+// a position is given. Kept separate from /api/vessels so it is a deliberate request
+// rather than something quietly mixed into ordinary marine traffic.
+async function getUsvFleet(lat, lon) {
+  const fleet = await getFleet();
+  const hasPos = Number.isFinite(lat) && Number.isFinite(lon);
+  let out = fleet.filter((v) => v.usv);
+  if (hasPos) {
+    out = out.map((v) => ({ ...v, distNm: nmBetween(lat, lon, v.lat, v.lon) }))
+             .sort((a, b) => a.distNm - b.distNm);
+  }
+  return {
+    source: PROVIDER, upstream: upstreamStatus(), updated: new Date().toISOString(),
+    note: "Most military USVs broadcast no AIS at all. This shows the research and commercial fleet that does, plus small unidentified hulls flagged as possible.",
+    count: out.length,
+    confirmed: out.filter((v) => v.usvConfidence === "confirmed").length,
+    possible: out.filter((v) => v.usvConfidence === "possible").length,
+    vessels: out.slice(0, 300),
+  };
+}
+
 // ---------------------------------------------------------------------------
 //  HTTP
 // ---------------------------------------------------------------------------
@@ -271,4 +322,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`AIS proxy on :${PORT} — provider=${PROVIDER}`));
 }
 
-module.exports = { normalizeDigitraffic, ingestAisstream, aisstreamFleet, getVessels, startAisstream, createServer, handler, store, upstreamStatus, _upstreamState: upstreamState };
+module.exports = { classifyUsv, getUsvFleet, normalizeDigitraffic, ingestAisstream, aisstreamFleet, getVessels, startAisstream, createServer, handler, store, upstreamStatus, _upstreamState: upstreamState };
