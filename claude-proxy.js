@@ -186,6 +186,13 @@ site's headline figure counts aircraft across a WHOLE REGION, not aircraft at th
 X" or "X recorded N contacts". Write "within 250nm of X" or "in the region around X". Where a
 25nm figure is supplied, that one may be described as close to the base itself.
 
+You are given TWO rankings: aircraft within 250nm (a whole region) and aircraft within 25nm
+(the airfield itself). You must use BOTH. Lead with the 25nm ranking, because that is the one
+that describes activity at bases. Where the two rankings disagree, say so explicitly and
+explain what the difference means: a site with a large 250nm count and a small 25nm count sits
+inside busy airspace without being busy itself. That divergence is the most useful thing in
+this data — never omit it when it is present.
+
 Write 120-180 words of PLAIN PROSE ONLY. No markdown, no "#" headings, no title, no bold, no
 bullet points. Begin with the first sentence of the briefing itself.
 
@@ -199,23 +206,27 @@ appearance.
 
 Never infer intent, mission, escalation, or geopolitical meaning. Report what was observed.`;
 
-async function writeDigest({ windowDays, top, risers, newSites, totals, sweepRadiusNm = 250,
+async function writeDigest({ windowDays, top, topNear, risers, newSites, totals, sweepRadiusNm = 250,
                              nearRadiusNm = 25, coversPrevWindow = true, archiveAgeHours = null }) {
   const user =
 `Archive window: last ${windowDays} days.
 Each figure below counts DISTINCT aircraft seen within ${sweepRadiusNm}nm of the named site — a region, not the base itself.
 Totals: ${totals.contacts} aircraft, ${totals.uav} UAV, ${totals.military} military, across ${totals.sites} airspaces.
 
-Busiest regions (aircraft within ${sweepRadiusNm}nm of each site):
+Busiest AIRFIELDS — ranked by aircraft within ${nearRadiusNm}nm of the site itself:
+${(topNear && topNear.length ? topNear : top).map((s) =>
+  `- ${s.site} (${s.country || "—"}): ${s.nearContacts != null ? s.nearContacts : "?"} within ${nearRadiusNm}nm; ${s.contacts} within ${sweepRadiusNm}nm`).join("\n") || "- none"}
+
+Busiest REGIONS — ranked by aircraft within ${sweepRadiusNm}nm (a region, not a base):
 ${top.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts} aircraft, ${s.uav} UAV, ${s.military} military` +
-    (s.nearContacts != null ? `; ${s.nearContacts} of them within ${nearRadiusNm}nm of the site itself` : "")).join("\n") || "- none"}
+    (s.nearContacts != null ? `; only ${s.nearContacts} within ${nearRadiusNm}nm` : "")).join("\n") || "- none"}
 
 ${coversPrevWindow
   ? `Largest increases vs the previous window:\n${risers.map((s) => `- ${s.site}: ${s.prev} -> ${s.now}`).join("\n") || "- none"}\n\nRegions producing their first recorded aircraft:\n${newSites.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts}`).join("\n") || "- none"}`
   : `NO COMPARISON AVAILABLE: the archive only reaches back ${archiveAgeHours != null ? archiveAgeHours + " hours" : "less than the comparison window"}, which is shorter than the previous ${windowDays}-day window. Do not describe anything as new, rising, or a first appearance. State that week-on-week comparison is not yet possible.`}
 
 Write the briefing.`;
-  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, risers, newSites, totals, coversPrevWindow }) });
+  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, topNear, risers, newSites, totals, coversPrevWindow }) });
 }
 
 // ---------------------------------------------------------------------------
