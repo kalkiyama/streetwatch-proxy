@@ -113,6 +113,31 @@ async function handler(req, res) {
       Number(u.searchParams.get("lat")), Number(u.searchParams.get("lon"))), origin);
   }
 
+  // Operational visibility. Without this, "are we near the upstream limit" is guesswork.
+  // Exposes counters only — no user data, no coordinates, no keys.
+  if (p === "/metrics") {
+    const a = adsb.stats || {};
+    const mem = process.memoryUsage();
+    return send(res, 200, {
+      uptimeSec: Math.round(process.uptime()),
+      memoryMB: { rss: +(mem.rss / 1048576).toFixed(1), heapUsed: +(mem.heapUsed / 1048576).toFixed(1) },
+      aircraft: {
+        requests: a.requests || 0,
+        cacheHits: a.cacheHits || 0,
+        staleServed: a.staleServed || 0,
+        coalesced: a.coalesced || 0,
+        cacheHitRatio: a.requests ? +(((a.cacheHits + a.staleServed + a.coalesced) / a.requests)).toFixed(3) : null,
+        upstreamCalls: a.upstreamCalls || 0,
+        upstreamErrors: a.upstreamErrors || 0,
+        upstreamCallsLastMin: adsb.upstreamRate ? adsb.upstreamRate() : null,
+        upstreamAvgMs: a.upstreamCalls ? Math.round(a.upstreamMsTotal / a.upstreamCalls) : null,
+      },
+      sweep: droneSweep.getDrones ? (() => { const s = droneSweep.getDrones(60).sweep;
+        return { sites: s.sites, passSize: s.passSize, hotSites: s.hotSites, cycles: s.cycles, errors: s.errors }; })() : null,
+      archive: archive.stats ? "use /api/drones/archive-stats" : null,
+    }, origin);
+  }
+
   if (p === "/api/webcams") {
     const u = new URL(req.url, "http://localhost");
     return send(res, 200, await webcams.getWebcams(
