@@ -118,6 +118,7 @@ function startAisstream() {
   if (typeof WebSocket === "undefined") { console.warn("[aisstream] needs Node >= 21 global WebSocket"); return; }
   let lastMsgAt = Date.now();
   let msgCount = 0, badCount = 0;
+  let retries = 0;                     // drives exponential backoff on reconnect
   setInterval(() => {
     console.log(`[aisstream] 60s: msgs=${msgCount} badParse=${badCount} fleet=${store.size}`);
     msgCount = 0; badCount = 0;
@@ -127,6 +128,7 @@ function startAisstream() {
     ws.addEventListener("open", () => {
       console.log("[aisstream] connected");
       lastMsgAt = Date.now();
+      retries = 0;
       // NOTE: whole-globe bbox is a firehose; narrow it in production.
       ws.send(JSON.stringify({ APIKey: AISSTREAM_KEY, BoundingBoxes: [[[-90, -180], [90, 180]]],
         FilterMessageTypes: ["PositionReport", "ShipStaticData"] }));
@@ -153,8 +155,21 @@ function startAisstream() {
           "| frame type:", ev.data && ev.data.constructor ? ev.data.constructor.name : typeof ev.data);
       }
     });
-    ws.addEventListener("close", () => { console.warn("[aisstream] closed — reconnecting in 3s"); setTimeout(connect, 3000); });
-    ws.addEventListener("error", () => { try { ws.close(); } catch {} });
+    ws.addEventListener("close", (ev) => {
+      const code = (ev && ev.code) || 0;
+      const reason = ((ev && ev.reason) || "").toString().slice(0, 200);
+      retries++;
+      const wait = Math.min(3000 * Math.pow(2, retries - 1), 60000);   // 3s, 6s, 12s … capped at 60s
+      console.warn(`[aisstream] closed code=${code}${reason ? " reason=" + reason : ""} — retry #${retries} in ${wait / 1000}s`);
+      if (code === 1008 || (reason && /unauthor|invalid|api ?key|forbidden|limit/i.test(reason)))
+        console.error("[aisstream] looks like an API-key or quota problem, not a network blip");
+      setTimeout(connect, wait);
+    });
+    ws.addEventListener("error", (ev) => {
+      const msg = (ev && (ev.message || (ev.error && ev.error.message))) || "";
+      if (msg) console.error("[aisstream] socket error:", String(msg).slice(0, 200));
+      try { ws.close(); } catch {}
+    });
     // Watchdog: a half-open socket emits nothing — if the firehose goes silent
     // for 2 minutes, the connection is dead. Force-close to trigger reconnect.
     const dog = setInterval(() => {
