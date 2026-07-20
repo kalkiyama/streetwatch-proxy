@@ -73,6 +73,204 @@ async function digitrafficFleet() {
   return fleet;
 }
 
+
+// ---------------------------------------------------------------------------
+//  Provider: Kystverket (Norwegian Coastal Administration) — open AIS TCP feed.
+//
+//  Norway publishes raw NMEA AIVDM sentences on a public TCP socket, no key needed.
+//  Coverage: Norwegian coast + Svalbard. Combined with digitraffic (Baltic) under
+//  AIS_PROVIDER=hybrid this restores real northern-European marine data while
+//  aisstream (global) remains dead — its TLS cert expired 2026-05-20 and two months
+//  of open GitHub issues have gone unanswered.
+//
+//  The stream is raw ITU-R M.1371 six-bit armored payloads, so we decode the message
+//  types that matter here: 1/2/3 (Class A position), 5 (Class A static, 2 parts),
+//  18 (Class B position), 24 (Class B static).
+// ---------------------------------------------------------------------------
+const KV_HOST = process.env.KYSTVERKET_HOST || "153.44.253.27";
+const KV_PORT = Number(process.env.KYSTVERKET_PORT || 5631);
+const nordicStore = new Map();          // mmsi -> vessel, same shape as aisstream store
+let kvState = { connected: false, lastMsgAt: 0, retries: 0 };
+let kvCounters = { lines: 0, decoded: 0, bad: 0 };
+
+// six-bit armor: ASCII -> 6-bit value
+function sixbitVal(ch) {
+  let v = ch.charCodeAt(0) - 48;
+  if (v > 40) v -= 8;
+  return v;
+}
+function payloadBits(payload) {
+  let bits = "";
+  for (const ch of payload) bits += sixbitVal(ch).toString(2).padStart(6, "0");
+  return bits;
+}
+const uint = (b, from, len) => parseInt(b.slice(from, from + len) || "0", 2);
+function sint(b, from, len) {
+  const raw = uint(b, from, len);
+  return raw >= 1 << (len - 1) ? raw - (1 << len) : raw;   // two's complement
+}
+function sixbitText(b, from, len) {
+  let out = "";
+  for (let i = from; i + 6 <= from + len; i += 6) {
+    const v = uint(b, i, 6);
+    out += String.fromCharCode(v < 32 ? v + 64 : v);
+  }
+  return out.replace(/@/g, " ").trim();
+}
+
+function decodeAivdmPayload(bits) {
+  const type = uint(bits, 0, 6);
+  const mmsi = uint(bits, 8, 30);
+  if (!mmsi) return null;
+
+  if (type >= 1 && type <= 3) {
+    const lon = sint(bits, 61, 28) / 600000;
+    const lat = sint(bits, 89, 27) / 600000;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;   // "not available" sentinels
+    const sog = uint(bits, 50, 10);
+    const cog = uint(bits, 116, 12);
+    const hdg = uint(bits, 128, 9);
+    return { kind: "pos", mmsi, lat, lon,
+      navStatus: uint(bits, 38, 4),
+      sogKt: sog === 1023 ? null : sog / 10,
+      cogDeg: cog === 3600 ? null : cog / 10,
+      headingDeg: hdg === 511 ? null : hdg };
+  }
+  if (type === 18) {
+    const lon = sint(bits, 57, 28) / 600000;
+    const lat = sint(bits, 85, 27) / 600000;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    const sog = uint(bits, 46, 10);
+    const cog = uint(bits, 112, 12);
+    const hdg = uint(bits, 124, 9);
+    return { kind: "pos", mmsi, lat, lon,
+      sogKt: sog === 1023 ? null : sog / 10,
+      cogDeg: cog === 3600 ? null : cog / 10,
+      headingDeg: hdg === 511 ? null : hdg };
+  }
+  if (type === 5) {
+    const a = uint(bits, 240, 9), bb = uint(bits, 249, 9);
+    const c = uint(bits, 258, 6), d = uint(bits, 264, 6);
+    const draught = uint(bits, 294, 8);
+    return { kind: "static", mmsi,
+      callSign: sixbitText(bits, 70, 42) || null,
+      name: sixbitText(bits, 112, 120) || null,
+      typeCode: uint(bits, 232, 8) || null,
+      lengthM: a + bb || null, beamM: c + d || null,
+      draughtM: draught ? draught / 10 : null,
+      destination: sixbitText(bits, 302, 120) || null };
+  }
+  if (type === 24) {
+    const part = uint(bits, 38, 2);
+    if (part === 0) return { kind: "static", mmsi, name: sixbitText(bits, 40, 120) || null };
+    const a = uint(bits, 132, 9), bb = uint(bits, 141, 9);
+    const c = uint(bits, 150, 6), d = uint(bits, 156, 6);
+    return { kind: "static", mmsi,
+      typeCode: uint(bits, 40, 8) || null,
+      callSign: sixbitText(bits, 90, 42) || null,
+      lengthM: a + bb || null, beamM: c + d || null };
+  }
+  return null;                                             // type we do not need
+}
+
+function applyDecoded(dec) {
+  const id = String(dec.mmsi);
+  const cur = nordicStore.get(id) || { id };
+  cur.lastSeen = Date.now();
+  if (dec.kind === "pos") {
+    cur.lat = dec.lat; cur.lon = dec.lon;
+    if (dec.sogKt != null) cur.sogKt = dec.sogKt;
+    if (dec.cogDeg != null) cur.cogDeg = dec.cogDeg;
+    cur.headingDeg = headingOk(dec.headingDeg);
+    if (dec.navStatus != null) cur.navStatus = dec.navStatus;
+  } else {
+    if (dec.name) cur.name = clean(dec.name);
+    if (dec.callSign) cur.callSign = clean(dec.callSign) || null;
+    if (dec.typeCode != null) cur.typeCode = dec.typeCode;
+    if (dec.lengthM) cur.lengthM = dec.lengthM;
+    if (dec.beamM) cur.beamM = dec.beamM;
+    if (dec.draughtM) cur.draughtM = dec.draughtM;
+    if (dec.destination) cur.destination = clean(dec.destination) || null;
+  }
+  nordicStore.set(id, cur);
+}
+
+// multipart reassembly (type 5 spans two sentences)
+const kvParts = new Map();              // seq -> { total, got: Map(num -> payload), at }
+function handleAivdmLine(line) {
+  kvCounters.lines++;
+  if (!line.startsWith("!AIVDM") && !line.startsWith("!BSVDM") && !line.startsWith("!ABVDM")) return;
+  const star = line.indexOf("*");
+  const body = star > 0 ? line.slice(0, star) : line;
+  const f = body.split(",");
+  if (f.length < 6) { kvCounters.bad++; return; }
+  const total = Number(f[1]), num = Number(f[2]), seq = f[3] || "-";
+  const payload = f[5] || "";
+  if (!payload) { kvCounters.bad++; return; }
+
+  let bits = null;
+  if (total === 1) {
+    bits = payloadBits(payload);
+  } else {
+    let e = kvParts.get(seq);
+    if (!e || e.total !== total) { e = { total, got: new Map(), at: Date.now() }; kvParts.set(seq, e); }
+    e.got.set(num, payload);
+    if (e.got.size === total) {
+      let joined = "";
+      for (let i = 1; i <= total; i++) joined += e.got.get(i) || "";
+      kvParts.delete(seq);
+      bits = payloadBits(joined);
+    }
+  }
+  if (!bits) return;
+  try {
+    const dec = decodeAivdmPayload(bits);
+    if (dec) { applyDecoded(dec); kvCounters.decoded++; kvState.lastMsgAt = Date.now(); }
+  } catch { kvCounters.bad++; }
+}
+
+function startKystverket() {
+  const net = require("net");
+  let sock = null, buf = "";
+  const connect = () => {
+    sock = net.createConnection({ host: KV_HOST, port: KV_PORT });
+    sock.setEncoding("ascii");
+    sock.on("connect", () => { kvState.connected = true; kvState.retries = 0; console.log(`[kystverket] connected ${KV_HOST}:${KV_PORT}`); });
+    sock.on("data", (d) => {
+      buf += d;
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        handleAivdmLine(buf.slice(0, nl).trim());
+        buf = buf.slice(nl + 1);
+      }
+      if (buf.length > 65536) buf = "";               // never let a lineless stream grow the buffer
+    });
+    const down = () => {
+      if (!sock) return;
+      sock.destroy(); sock = null; buf = "";
+      kvState.connected = false;
+      const wait = Math.min(3000 * 2 ** kvState.retries, 60000);
+      kvState.retries++;
+      console.log(`[kystverket] disconnected — retry #${kvState.retries} in ${wait / 1000}s`);
+      setTimeout(connect, wait);
+    };
+    sock.on("error", down);
+    sock.on("close", down);
+    sock.on("end", down);
+  };
+  connect();
+  setInterval(() => {
+    console.log(`[kystverket] 60s: lines=${kvCounters.lines} decoded=${kvCounters.decoded} bad=${kvCounters.bad} fleet=${nordicStore.size}`);
+    kvCounters = { lines: 0, decoded: 0, bad: 0 };
+    const cut = Date.now() - 10 * 60 * 1000;
+    for (const [k, v] of nordicStore) if (v.lastSeen < cut) nordicStore.delete(k);
+  }, 60000);
+}
+
+function kystverketStatus() {
+  return kvState.connected && Date.now() - kvState.lastMsgAt < 2 * 60 * 1000 ? "live" : "down";
+}
+
 // ---------------------------------------------------------------------------
 //  Provider: aisstream.io (global WebSocket ingest -> in-memory fleet).
 // ---------------------------------------------------------------------------
@@ -112,7 +310,14 @@ function ingestAisstream(msg) {
 }
 // upstream health: "live" once messages flow, "down" while we cannot hold a connection
 let upstreamState = { connected: false, lastMsgAt: 0, lastCloseCode: null, retries: 0 };
+function sourceStatus() {
+  if (PROVIDER === "hybrid") return { digitraffic: "live", kystverket: kystverketStatus() };
+  if (PROVIDER === "aisstream") return { aisstream: upstreamStatus() };
+  return { [PROVIDER]: "live" };
+}
+
 function upstreamStatus() {
+  if (PROVIDER === "hybrid") return kystverketStatus() === "live" ? "live" : "partial";
   if (PROVIDER !== "aisstream") return "live";
   const fresh = Date.now() - upstreamState.lastMsgAt < 120000;
   return upstreamState.connected && fresh ? "live" : "down";
@@ -190,6 +395,12 @@ function parseBoxes() {
     .filter((v) => v.length === 4 && v.every(Number.isFinite))
     .map(([a, b, c, d]) => [[a, b], [c, d]]);
   return boxes.length ? boxes : [[[-90, -180], [90, 180]]];
+}
+
+function startProviders() {
+  if (PROVIDER === "aisstream") return startAisstream();
+  if (PROVIDER === "hybrid") return startKystverket();
+  // digitraffic is pull-based; nothing to start
 }
 
 function startAisstream() {
@@ -277,7 +488,30 @@ function startAisstream() {
   setInterval(() => { const cut = Date.now() - 10 * 60 * 1000; for (const [k, v] of store) if (v.lastSeen < cut) store.delete(k); }, 60000);
 }
 
-async function getFleet() { return PROVIDER === "aisstream" ? aisstreamFleet() : digitrafficFleet(); }
+function classifyAll(list, provider) {
+  // Classification applies to EVERY provider. Previously only the aisstream path ran
+  // classifyUsv/classifySubSupport, so in digitraffic mode a Saildrone in Helsinki
+  // harbour would never have been flagged — the sea-drone layer silently depended on
+  // which provider happened to be configured.
+  return list.map((v) => Object.assign({ provider }, v, classifyUsv(v), classifySubSupport(v)));
+}
+
+async function getFleet() {
+  if (PROVIDER === "aisstream") return aisstreamFleet();   // already classified in-path
+  if (PROVIDER === "hybrid") {
+    // Baltic (digitraffic REST) + Norway/Svalbard (kystverket TCP), merged by MMSI.
+    // A vessel seen by both keeps the streamed record — it is fresher and richer.
+    const dt = await digitrafficFleet().catch(() => []);
+    const merged = new Map();
+    classifyAll(dt, "digitraffic").forEach((v) => merged.set(v.id, v));
+    classifyAll(
+      Array.from(nordicStore.values()).filter((v) => typeof v.lat === "number" && typeof v.lon === "number"),
+      "kystverket"
+    ).forEach((v) => merged.set(v.id, v));
+    return Array.from(merged.values());
+  }
+  return classifyAll(await digitrafficFleet(), "digitraffic");
+}
 
 // Radius-filtered vessels around a point (used by the combined server).
 async function getVessels(lat, lon, radius) {
@@ -286,7 +520,7 @@ async function getVessels(lat, lon, radius) {
     .map((v) => ({ ...v, distNm: nmBetween(lat, lon, v.lat, v.lon) }))
     .filter((v) => v.distNm <= radius)
     .sort((a, b) => a.distNm - b.distNm);
-  return { source: PROVIDER, upstream: upstreamStatus(), updated: new Date().toISOString(), count: vessels.length, vessels };
+  return { source: PROVIDER, upstream: upstreamStatus(), sources: sourceStatus(), coverage: PROVIDER === "hybrid" ? "Baltic Sea (digitraffic) + Norwegian coast & Svalbard (Kystverket) — regional, not global" : undefined, updated: new Date().toISOString(), count: vessels.length, vessels };
 }
 
 // Global sea-drone watch: every USV candidate currently in the fleet, nearest first when
@@ -375,4 +609,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`AIS proxy on :${PORT} — provider=${PROVIDER}`));
 }
 
-module.exports = { classifyUsv, classifySubSupport, getUsvFleet, getSubSupportFleet, normalizeDigitraffic, ingestAisstream, aisstreamFleet, getVessels, startAisstream, createServer, handler, store, upstreamStatus, _upstreamState: upstreamState };
+module.exports = { classifyUsv, classifySubSupport, getUsvFleet, getSubSupportFleet, getFleet, getVessels, startProviders, startKystverket, decodeAivdmPayload, handleAivdmLine, _nordicStore: nordicStore, normalizeDigitraffic, ingestAisstream, aisstreamFleet, startAisstream, createServer, handler, store, upstreamStatus, _upstreamState: upstreamState };

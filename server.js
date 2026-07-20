@@ -199,7 +199,7 @@ async function handler(req, res) {
 function createServer() { return http.createServer(handler); }
 
 if (require.main === module) {
-  if ((process.env.AIS_PROVIDER || "digitraffic") === "aisstream") ais.startAisstream();
+  ais.startProviders();      // aisstream (WS) / hybrid (Kystverket TCP) / digitraffic (pull, no-op)
   createServer().listen(PORT, () => console.log(`StreetWatch proxy on :${PORT} — origins=${ORIGINS.join(",")} limit=${LIMIT}/min`));
 
   // Seed the sweep's adaptive tiers from the archive BEFORE starting, so a redeploy does not
