@@ -18,7 +18,16 @@ const http = require("http");
 
 const PORT = process.env.PORT || 8788;
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
-const PROVIDER = process.env.AIS_PROVIDER || "digitraffic";
+// AIS_PROVIDER accepts a comma-separated list: "digitraffic,kystverket,aisstream".
+// Render env vars are single key/value pairs, so combination is expressed in the value.
+// "hybrid" is kept as an alias for digitraffic+kystverket so existing deployments and
+// the current Render setting keep working unchanged.
+const PROVIDER_RAW = process.env.AIS_PROVIDER || "digitraffic";
+const PROVIDERS = new Set(
+  (PROVIDER_RAW === "hybrid" ? "digitraffic,kystverket" : PROVIDER_RAW)
+    .split(",").map((x) => x.trim()).filter(Boolean)
+);
+const PROVIDER = PROVIDER_RAW;   // kept for response payloads / logging
 const AISSTREAM_KEY = process.env.AISSTREAM_KEY || "";
 const DT_USER = process.env.DIGITRAFFIC_USER || "streetwatch/ais-proxy 1.0";
 const CACHE_MS = 5000;
@@ -324,14 +333,22 @@ function ingestAisstream(msg) {
 // upstream health: "live" once messages flow, "down" while we cannot hold a connection
 let upstreamState = { connected: false, lastMsgAt: 0, lastCloseCode: null, retries: 0 };
 function sourceStatus() {
-  if (PROVIDER === "hybrid") return { digitraffic: "live", kystverket: kystverketStatus() };
-  if (PROVIDER === "aisstream") return { aisstream: upstreamStatus() };
-  return { [PROVIDER]: "live" };
+  const out = {};
+  if (PROVIDERS.has("digitraffic")) out.digitraffic = "live";           // pull-based; failures surface per-request
+  if (PROVIDERS.has("kystverket")) out.kystverket = kystverketStatus();
+  if (PROVIDERS.has("aisstream")) out.aisstream = aisstreamRawStatus();
+  return out;
 }
 
 function upstreamStatus() {
-  if (PROVIDER === "hybrid") return kystverketStatus() === "live" ? "live" : "partial";
-  if (PROVIDER !== "aisstream") return "live";
+  const st = Object.values(sourceStatus());
+  if (!st.length) return "down";
+  if (st.every((x) => x === "live")) return "live";
+  return st.some((x) => x === "live") ? "partial" : "down";
+}
+
+function aisstreamRawStatus() {
+  if (!PROVIDERS.has("aisstream")) return "off";
   const fresh = Date.now() - upstreamState.lastMsgAt < 120000;
   return upstreamState.connected && fresh ? "live" : "down";
 }
@@ -411,9 +428,10 @@ function parseBoxes() {
 }
 
 function startProviders() {
-  if (PROVIDER === "aisstream") return startAisstream();
-  if (PROVIDER === "hybrid") return startKystverket();
-  // digitraffic is pull-based; nothing to start
+  // Start every enabled push ingest; digitraffic is pull-based, nothing to start.
+  if (PROVIDERS.has("kystverket")) startKystverket();
+  if (PROVIDERS.has("aisstream")) startAisstream();
+  console.log(`[ais] providers: ${[...PROVIDERS].join(" + ")}`);
 }
 
 function startAisstream() {
@@ -510,20 +528,24 @@ function classifyAll(list, provider) {
 }
 
 async function getFleet() {
-  if (PROVIDER === "aisstream") return aisstreamFleet();   // already classified in-path
-  if (PROVIDER === "hybrid") {
-    // Baltic (digitraffic REST) + Norway/Svalbard (kystverket TCP), merged by MMSI.
-    // A vessel seen by both keeps the streamed record — it is fresher and richer.
+  // Merge every enabled source by MMSI. Later sources overwrite earlier ones on overlap,
+  // so the order goes pull-cache first, live streams last — the streamed record is
+  // fresher and richer.
+  const merged = new Map();
+  if (PROVIDERS.has("digitraffic")) {
     const dt = await digitrafficFleet().catch(() => []);
-    const merged = new Map();
     classifyAll(dt, "digitraffic").forEach((v) => merged.set(v.id, v));
+  }
+  if (PROVIDERS.has("kystverket")) {
     classifyAll(
       Array.from(nordicStore.values()).filter((v) => typeof v.lat === "number" && typeof v.lon === "number"),
       "kystverket"
     ).forEach((v) => merged.set(v.id, v));
-    return Array.from(merged.values());
   }
-  return classifyAll(await digitrafficFleet(), "digitraffic");
+  if (PROVIDERS.has("aisstream")) {
+    aisstreamFleet().forEach((v) => merged.set(v.id, Object.assign({ provider: "aisstream" }, v)));
+  }
+  return Array.from(merged.values());
 }
 
 // Radius-filtered vessels around a point (used by the combined server).
@@ -533,7 +555,13 @@ async function getVessels(lat, lon, radius) {
     .map((v) => ({ ...v, distNm: nmBetween(lat, lon, v.lat, v.lon) }))
     .filter((v) => v.distNm <= radius)
     .sort((a, b) => a.distNm - b.distNm);
-  return { source: PROVIDER, upstream: upstreamStatus(), sources: sourceStatus(), coverage: PROVIDER === "hybrid" ? "Baltic Sea (digitraffic) + Norwegian coast & Svalbard (Kystverket) — regional, not global" : undefined, updated: new Date().toISOString(), count: vessels.length, vessels };
+  return { source: PROVIDER, upstream: upstreamStatus(), sources: sourceStatus(), coverage: (() => {
+      const parts = [];
+      if (PROVIDERS.has("digitraffic")) parts.push("Baltic Sea (digitraffic)");
+      if (PROVIDERS.has("kystverket")) parts.push("Norwegian coast & Svalbard (Kystverket)");
+      if (PROVIDERS.has("aisstream")) parts.push("global (aisstream)");
+      return parts.join(" + ") + (PROVIDERS.has("aisstream") ? "" : " — regional, not global");
+    })(), updated: new Date().toISOString(), count: vessels.length, vessels };
 }
 
 // Global sea-drone watch: every USV candidate currently in the fleet, nearest first when
