@@ -175,6 +175,133 @@ const SITES = [
   ["Korea DMZ approach", "South Korea", 37.900, 126.900],
   ["Kashmir / Srinagar", "India", 34.000, 74.780],
   ["Caribbean south", "International waters", 12.800, -70.500],
+
+  // ---- Extended global coverage: every country with plausibly observable military or
+  //      state aviation. Many of these will stay quiet for long periods — that is expected,
+  //      and the cold tier means quiet sites cost almost nothing.
+  ["Baldonnel", "Ireland", 53.300, -6.440],
+  ["Karup AB", "Denmark", 56.300, 9.120],
+  ["Lielvarde AB", "Latvia", 56.780, 24.850],
+  ["Machulishchy", "Belarus", 53.770, 27.630],
+  ["Lviv approach", "Ukraine", 49.810, 23.960],
+  ["Zeltweg AB", "Austria", 47.200, 14.740],
+  ["Payerne AB", "Switzerland", 46.840, 6.920],
+  ["Caslav AB", "Czechia", 49.940, 15.380],
+  ["Sliac AB", "Slovakia", 48.640, 19.130],
+  ["Kecskemet AB", "Hungary", 46.920, 19.750],
+  ["Cerklje AB", "Slovenia", 45.900, 15.530],
+  ["Zagreb Pleso", "Croatia", 45.740, 16.070],
+  ["Batajnica AB", "Serbia", 44.930, 20.260],
+  ["Sarajevo", "Bosnia", 43.820, 18.330],
+  ["Skopje", "North Macedonia", 41.960, 21.620],
+  ["Kucove AB", "Albania", 40.780, 19.900],
+  ["Podgorica", "Montenegro", 42.360, 19.250],
+  ["Luqa", "Malta", 35.860, 14.480],
+  ["Findel", "Luxembourg", 49.630, 6.210],
+  ["Tampere-Pirkkala", "Finland", 61.410, 23.600],
+  ["Bodo", "Norway", 67.270, 14.370],
+  ["Kaliningrad", "Russia", 54.890, 20.590],
+  ["Moscow area", "Russia", 55.570, 37.270],
+  ["Vladivostok", "Russia", 43.400, 132.150],
+  ["Thumrait AB", "Oman", 17.670, 54.020],
+  ["Aden", "Yemen", 12.830, 45.030],
+  ["Latakia", "Syria", 35.400, 35.950],
+  ["Tehran area", "Iran", 35.420, 51.150],
+  ["Kenitra AB", "Morocco", 34.300, -6.600],
+  ["Boufarik AB", "Algeria", 36.550, 2.870],
+  ["Bizerte", "Tunisia", 37.240, 9.790],
+  ["Addis Ababa", "Ethiopia", 8.980, 38.800],
+  ["Asmara", "Eritrea", 15.290, 38.910],
+  ["Entebbe", "Uganda", 0.040, 32.440],
+  ["Dar es Salaam", "Tanzania", -6.870, 39.200],
+  ["Kigali", "Rwanda", -1.970, 30.140],
+  ["Brazzaville", "Congo", -4.250, 15.250],
+  ["Libreville", "Gabon", 0.460, 9.410],
+  ["Yaounde", "Cameroon", 3.720, 11.550],
+  ["Abuja", "Nigeria", 9.010, 7.270],
+  ["Ouagadougou", "Burkina Faso", 12.350, -1.510],
+  ["Dakar", "Senegal", 14.740, -17.490],
+  ["Nouakchott", "Mauritania", 18.100, -15.950],
+  ["Accra", "Ghana", 5.600, -0.170],
+  ["Abidjan", "Cote d'Ivoire", 5.260, -3.930],
+  ["Bangui", "Central African Rep", 4.400, 18.520],
+  ["Juba", "South Sudan", 4.870, 31.600],
+  ["Lusaka", "Zambia", -15.330, 28.450],
+  ["Harare", "Zimbabwe", -17.930, 31.090],
+  ["Gaborone", "Botswana", -24.550, 25.920],
+  ["Windhoek", "Namibia", -22.480, 17.470],
+  ["Waterkloof AFB", "South Africa", -25.830, 28.220],
+  ["Maputo", "Mozambique", -25.920, 32.570],
+  ["Luanda", "Angola", -8.860, 13.230],
+  ["Antananarivo", "Madagascar", -18.800, 47.480],
+  ["Conakry", "Guinea", 9.580, -13.610],
+  ["Monrovia", "Liberia", 6.240, -10.360],
+  ["Lome", "Togo", 6.170, 1.250],
+  ["Cotonou", "Benin", 6.360, 2.380],
+  ["Lilongwe", "Malawi", -13.790, 33.780],
+  ["Hanoi area", "Vietnam", 21.220, 105.810],
+  ["Phnom Penh", "Cambodia", 11.550, 104.840],
+  ["Vientiane", "Laos", 17.990, 102.560],
+  ["Yangon", "Myanmar", 16.900, 96.130],
+  ["Butterworth AB", "Malaysia", 5.470, 100.390],
+  ["Paya Lebar AB", "Singapore", 1.360, 103.910],
+  ["Jakarta area", "Indonesia", -6.130, 106.660],
+  ["Brunei", "Brunei", 4.940, 114.930],
+  ["Beijing area", "China", 39.510, 116.410],
+  ["Ulaanbaatar", "Mongolia", 47.840, 106.770],
+  ["Almaty", "Kazakhstan", 43.350, 77.040],
+  ["Tashkent", "Uzbekistan", 41.260, 69.270],
+  ["Ashgabat", "Turkmenistan", 37.990, 58.360],
+  ["Dushanbe", "Tajikistan", 38.540, 68.820],
+  ["Bishkek", "Kyrgyzstan", 43.060, 74.480],
+  ["Baku", "Azerbaijan", 40.470, 50.050],
+  ["Tbilisi", "Georgia", 41.670, 44.950],
+  ["Kathmandu", "Nepal", 27.700, 85.360],
+  ["Dhaka", "Bangladesh", 23.840, 90.400],
+  ["Colombo", "Sri Lanka", 7.180, 79.880],
+  ["Male", "Maldives", 4.190, 73.530],
+  ["Dili", "Timor-Leste", -8.550, 125.520],
+  ["Santa Lucia AB", "Mexico", 19.750, -99.020],
+  ["Guatemala City", "Guatemala", 14.580, -90.530],
+  ["Soto Cano AB", "Honduras", 14.380, -87.620],
+  ["Managua", "Nicaragua", 12.140, -86.170],
+  ["San Jose", "Costa Rica", 9.990, -84.210],
+  ["Panama City", "Panama", 8.910, -79.600],
+  ["Havana", "Cuba", 23.000, -82.410],
+  ["Santo Domingo", "Dominican Rep", 18.430, -69.670],
+  ["Port-au-Prince", "Haiti", 18.580, -72.290],
+  ["Kingston", "Jamaica", 17.940, -76.790],
+  ["Port of Spain", "Trinidad", 10.600, -61.340],
+  ["Caracas", "Venezuela", 10.600, -66.990],
+  ["Quito", "Ecuador", -0.140, -78.490],
+  ["Lima area", "Peru", -12.020, -77.110],
+  ["La Paz", "Bolivia", -16.510, -68.190],
+  ["Brasilia", "Brazil", -15.870, -47.920],
+  ["Manaus", "Brazil", -3.040, -60.050],
+  ["Rio de Janeiro", "Brazil", -22.910, -43.160],
+  ["Asuncion", "Paraguay", -25.240, -57.520],
+  ["Montevideo", "Uruguay", -34.790, -56.030],
+  ["Buenos Aires", "Argentina", -34.560, -58.420],
+  ["Rio Gallegos", "Argentina", -51.610, -69.310],
+  ["Santiago", "Chile", -33.390, -70.790],
+  ["Punta Arenas", "Chile", -53.000, -70.850],
+  ["Georgetown", "Guyana", 6.800, -58.250],
+  ["Paramaribo", "Suriname", 5.450, -55.190],
+  ["Belize City", "Belize", 17.540, -88.310],
+  ["Nassau", "Bahamas", 25.040, -77.470],
+  ["Pituffik", "Greenland", 76.530, -68.700],
+  ["CFB Trenton", "Canada", 44.120, -77.530],
+  ["CFB Bagotville", "Canada", 48.330, -70.990],
+  ["Port Moresby", "Papua New Guinea", -9.440, 147.220],
+  ["Nadi", "Fiji", -17.750, 177.440],
+  ["Noumea", "New Caledonia", -22.010, 166.210],
+  ["Kwajalein", "Marshall Islands", 8.720, 167.730],
+  ["Tahiti Faa'a", "French Polynesia", -17.550, -149.610],
+  ["RAAF Darwin", "Australia", -12.410, 130.880],
+  ["RAAF Pearce", "Australia", -31.670, 116.020],
+  ["Honiara", "Solomon Islands", -9.430, 160.050],
+  ["Guadalcanal approach", "Vanuatu", -17.700, 168.320],
+  ["McMurdo approach", "Antarctica", -77.850, 166.670],
 ];
 
 const seen = new Map();     // id -> sighting record
@@ -183,26 +310,43 @@ const seen = new Map();     // id -> sighting record
 // one only every ~25 min. Instead: any site that produced a contact in the last 24h is
 // "hot" and gets visited every pass; quiet sites are checked once every COLD_EVERY passes.
 // Upstream load is unchanged either way — it depends on the interval, not the site count.
-const COLD_EVERY = Number(process.env.SWEEP_COLD_EVERY || 3);
+// Three tiers, because breadth would otherwise cost freshness. With ~250 airspaces a
+// two-tier scheme pushes the productive ones to a ~22 min refresh; tiering keeps them at ~11.
+//   HOT   contact within 24h  -> every pass
+//   WARM  contact within 30d  -> every WARM_EVERY passes
+//   COLD  never seen anything -> every COLD_EVERY passes
+const WARM_EVERY = Number(process.env.SWEEP_WARM_EVERY || 3);
+const COLD_EVERY = Number(process.env.SWEEP_COLD_EVERY || 10);
+const HOT_MS = 24 * 60 * 60 * 1000;
+const WARM_MS = 30 * 24 * 60 * 60 * 1000;
 const lastHit = new Array(SITES.length).fill(0);
 let queue = [];
 let passNo = 0;
 let passSize = 0;
+let tiers = { hot: 0, warm: 0, cold: 0 };
 
 function buildPass() {
   passNo++;
   const now = Date.now();
-  const hot = [], cold = [];
-  SITES.forEach((_, i) => ((now - lastHit[i] < 24 * 60 * 60 * 1000) ? hot : cold).push(i));
-  const slice = cold.filter((_, k) => k % COLD_EVERY === passNo % COLD_EVERY);
-  // interleave so hot and cold are spread through the pass rather than front-loaded
+  const hot = [], warm = [], cold = [];
+  SITES.forEach((_, i) => {
+    const age = now - lastHit[i];
+    if (age < HOT_MS) hot.push(i);
+    else if (lastHit[i] > 0 && age < WARM_MS) warm.push(i);
+    else cold.push(i);
+  });
+  const warmSlice = warm.filter((_, k) => k % WARM_EVERY === passNo % WARM_EVERY);
+  const coldSlice = cold.filter((_, k) => k % COLD_EVERY === passNo % COLD_EVERY);
+  const extra = warmSlice.concat(coldSlice);
+  // interleave so the pass is not front-loaded with hot sites
   const out = [];
-  const step = slice.length ? Math.max(1, Math.round(hot.length / slice.length)) : Infinity;
+  const step = extra.length ? Math.max(1, Math.round(hot.length / extra.length)) : Infinity;
   let ci = 0;
-  hot.forEach((h, i) => { out.push(h); if ((i + 1) % step === 0 && ci < slice.length) out.push(slice[ci++]); });
-  while (ci < slice.length) out.push(slice[ci++]);
+  hot.forEach((h, i) => { out.push(h); if ((i + 1) % step === 0 && ci < extra.length) out.push(extra[ci++]); });
+  while (ci < extra.length) out.push(extra[ci++]);
   queue = out.length ? out : SITES.map((_, i) => i);
   passSize = queue.length;
+  tiers = { hot: hot.length, warm: warm.length, cold: cold.length };
   return passSize;
 }
 let cycles = 0, sweepErrors = 0, lastSweepAt = null;
@@ -286,7 +430,9 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
       sites: SITES.length,
       visited: Math.max(0, (queue.length ? passSize - queue.length : passSize)),
       passSize,
-      hotSites: lastHit.filter((t) => Date.now() - t < 24 * 60 * 60 * 1000).length,
+      hotSites: tiers.hot,
+      warmSites: tiers.warm,
+      coldSites: tiers.cold,
       cycles, lastSweepAt, errors: sweepErrors, tracked24h: seen.size,
       intervalSec: SITE_INTERVAL_MS / 1000,
     },
