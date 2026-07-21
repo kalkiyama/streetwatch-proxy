@@ -239,6 +239,8 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
               count(DISTINCT icao)::int AS contacts,
               count(DISTINCT icao) FILTER (WHERE kind = 'uav')::int AS uav,
               count(DISTINCT icao) FILTER (WHERE kind = 'military')::int AS military,
+              count(*) FILTER (WHERE dist_nm <= 25)::int AS p25,
+              count(*) FILTER (WHERE dist_nm <= 100)::int AS p100,
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 25)::int AS c25,
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND kind = 'uav')::int AS uav25,
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND kind = 'military')::int AS mil25,
