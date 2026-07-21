@@ -20,19 +20,51 @@ const webcams = require("./webcams-proxy.js");
 const ai = require("./claude-proxy.js");
 const geometry = require("./geometry.js");
 
-// Sliding-window per-IP allowance for /api/ai/* — 12 generations per 10 minutes.
-const AI_IP_WINDOW_MS = 10 * 60 * 1000;
-const AI_IP_MAX = 12;
-const aiHits = new Map();
-function aiAllowed(ip) {
+// Escalating per-IP gate for /api/ai/* (passcode-lock pattern):
+//   phase 0  normal        — up to 8 fresh generations per rolling 10 minutes
+//   phase 1  hold          — 9th within the window: everything AI waits 5 minutes
+//   phase 2  cache-only    — after the hold, until 24h from the breach OR next UTC midnight,
+//                            whichever comes first, this address gets previously generated
+//                            analyses (cache) but no NEW model calls
+// The computed figures (SQL) are never gated — only the language-model call is. Cache hits
+// cost nothing, so an address in phase 2 still has a fully working, honest app.
+const AI_WIN_MS = 10 * 60 * 1000;
+const AI_MAX = 8;
+const AI_HOLD_MS = 5 * 60 * 1000;
+const AI_DAY_MS = 24 * 60 * 60 * 1000;
+const aiIp = new Map();   // ip -> { hits: [], holdUntil: 0, cacheOnlyUntil: 0 }
+
+function nextUtcMidnight(now) {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+}
+
+function aiGate(ip) {
   const now = Date.now();
-  let arr = (aiHits.get(ip) || []).filter((t) => now - t < AI_IP_WINDOW_MS);
-  if (arr.length >= AI_IP_MAX) { aiHits.set(ip, arr); return false; }
-  arr.push(now); aiHits.set(ip, arr);
-  if (aiHits.size > 5000) {                        // bounded memory under address churn
-    for (const [k, v] of aiHits) if (!v.length || now - v[v.length - 1] > AI_IP_WINDOW_MS) aiHits.delete(k);
+  let st = aiIp.get(ip) || { hits: [], holdUntil: 0, cacheOnlyUntil: 0 };
+  st.hits = st.hits.filter((t) => now - t < AI_WIN_MS);
+
+  if (now < st.holdUntil) {
+    aiIp.set(ip, st);
+    return { mode: "hold", waitSec: Math.ceil((st.holdUntil - now) / 1000) };
   }
-  return true;
+  if (now < st.cacheOnlyUntil) {
+    aiIp.set(ip, st);
+    return { mode: "cacheOnly", untilIso: new Date(st.cacheOnlyUntil).toISOString() };
+  }
+  if (st.hits.length >= AI_MAX) {
+    st.holdUntil = now + AI_HOLD_MS;
+    st.cacheOnlyUntil = Math.min(now + AI_DAY_MS, nextUtcMidnight(now));
+    aiIp.set(ip, st);
+    return { mode: "hold", waitSec: Math.ceil(AI_HOLD_MS / 1000) };
+  }
+  st.hits.push(now);
+  aiIp.set(ip, st);
+  if (aiIp.size > 5000) {
+    for (const [k, v] of aiIp)
+      if (now > v.cacheOnlyUntil && now > v.holdUntil && (!v.hits.length || now - v.hits[v.hits.length - 1] > AI_WIN_MS)) aiIp.delete(k);
+  }
+  return { mode: "ok" };
 }
 
 // site name -> centre, used wherever a distance-from-site has to be computed
@@ -174,14 +206,19 @@ async function handler(req, res) {
   // which a page of users (or one scripted clicker) could exhaust in minutes. Identical
   // requests are served from cache upstream and do not consume model calls, so this only
   // bites genuinely new generations.
+  let aiOpts = {};
   if (p.startsWith("/api/ai/") && p !== "/api/ai/status") {
     const fwd = req.headers["x-forwarded-for"];
     const ip = (typeof fwd === "string" && fwd.split(",")[0].trim()) || req.socket.remoteAddress || "?";
-    if (!aiAllowed(ip)) {
+    const gate = aiGate(ip);
+    if (gate.mode === "hold") {
       return send(res, 429, {
         error: "rate_limited",
-        note: "You have generated several analyses in a short time. Please wait a few minutes — repeated requests for the same window are served from cache and cost nothing.",
+        note: `You have generated several analyses in a short time. AI generation is paused for ${Math.ceil(gate.waitSec / 60)} minute(s) for your address. Computed figures remain available everywhere.`,
       }, origin);
+    }
+    if (gate.mode === "cacheOnly") {
+      aiOpts = { cacheOnly: true, cacheOnlyUntil: gate.untilIso };
     }
   }
 
@@ -197,7 +234,7 @@ async function handler(req, res) {
         note: "Not enough recorded positions to describe a flight profile." }, origin);
     }
     const geo = geometry.analyse(t.points.map((x) => ({ lat: x.lat, lon: x.lon, ts: x.ts, altFt: x.alt_ft })));
-    const r = await ai.narrateTrack({ geo, contact: t.contact });
+    const r = await ai.narrateTrack({ geo, contact: t.contact }, aiOpts);
     return send(res, 200, {
       icao, contact: t.contact,
       geometry: geo,                                  // the measured facts
@@ -211,7 +248,7 @@ async function handler(req, res) {
     const u = new URL(req.url, "http://localhost");
     const q = String(u.searchParams.get("q") || "").slice(0, 400);
     if (!q) return send(res, 400, { error: "q required" }, origin);
-    const r = await ai.parseSearch(q);
+    const r = await ai.parseSearch(q, aiOpts);
     return send(res, 200, r.ok
       ? { query: q, filter: r.filter, cached: !!r.cached,
           disclosure: "Your words were interpreted into the filter shown; the results themselves come from the catalogue and archive, not from a language model." }
@@ -225,11 +262,14 @@ async function handler(req, res) {
     // 250nm sweep figure — without them, a regional count gets reported as a base count.
     const data = await archive.digestData({ days, siteCoords: siteCoordMap() });
     if (!data) return send(res, 200, { error: "archive_unavailable" }, origin);
-    const r = await ai.writeDigest(data);
+    const r = await ai.writeDigest(data, aiOpts);
     return send(res, 200, {
       ...data,
       briefing: r.ok ? r.text : null,
       briefingStatus: r.ok ? (r.cached ? "cached" : "generated") : r.reason,
+      note: !r.ok && r.reason === "cache_only"
+        ? `AI generation is paused for your address until ${aiOpts.cacheOnlyUntil} (heavy recent use). Previously generated analyses and all computed figures remain available.`
+        : undefined,
       disclosure: "Counts computed from StreetWatch's public archive of ADS-B observations. The briefing is an AI-generated summary of those counts. Aircraft flying with transponders off are not represented, and a change in counts can reflect changes in observation as much as changes in activity.",
     }, origin);
   }
@@ -268,11 +308,14 @@ async function handler(req, res) {
     });
     pairs.sort((a, b) => a.distanceNm - b.distanceNm);
     const top = pairs.slice(0, 6);
-    const r = top.length ? await ai.describeCorrelations({ windowDays: days, pairs: top }) : { ok: false, reason: "no_pairs" };
+    const r = top.length ? await ai.describeCorrelations({ windowDays: days, pairs: top }, aiOpts) : { ok: false, reason: "no_pairs" };
     return send(res, 200, {
       windowDays: days, pairs: top, count: pairs.length,
       summary: r.ok ? r.text : null,
       summaryStatus: r.ok ? (r.cached ? "cached" : "generated") : r.reason,
+      note: !r.ok && r.reason === "cache_only"
+        ? `AI generation is paused for your address until ${aiOpts.cacheOnlyUntil} (heavy recent use). Computed pairs above are unaffected.`
+        : undefined,
       disclosure: "Co-occurrences in time and space only, computed from two independent public datasets. No causal link is implied or observable. Both datasets are incomplete: aircraft with transponders off and vessels outside AIS coverage do not appear.",
     }, origin);
   }
