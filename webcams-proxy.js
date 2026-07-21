@@ -20,9 +20,9 @@ const MAX_LIMIT = 50;                   // Windy's own per-request ceiling
 
 const cache = new Map();                // key -> { at, payload }
 
-function cacheKey(lat, lon, radiusKm, limit) {
+function cacheKey(lat, lon, radiusKm, limit, offset) {
   // round to ~1km so nearby requests share an entry without smearing results
-  return `${lat.toFixed(2)}:${lon.toFixed(2)}:${radiusKm}:${limit}`;
+  return `${lat.toFixed(2)}:${lon.toFixed(2)}:${radiusKm}:${limit}:${offset}`;
 }
 
 function normalise(w) {
@@ -47,7 +47,10 @@ function normalise(w) {
   };
 }
 
-async function getWebcams(lat, lon, radiusKm = 50, limit = 12) {
+// `offset` exists so the caller can page through the full set. A location like Heathrow has
+// 851 cameras within 50km — capping at the first 12 with no way forward was a decision made
+// for panel speed that quietly became a ceiling on what the user could see.
+async function getWebcams(lat, lon, radiusKm = 50, limit = 12, offset = 0) {
   if (!KEY) {
     return {
       configured: false, count: 0, webcams: [],
@@ -59,15 +62,16 @@ async function getWebcams(lat, lon, radiusKm = 50, limit = 12) {
   }
   const r = Math.min(Math.max(Number(radiusKm) || 50, 1), 250);
   const n = Math.min(Math.max(Number(limit) || 12, 1), MAX_LIMIT);
+  const off = Math.min(Math.max(Number(offset) || 0, 0), 2000);   // Windy paginates; stay sane
 
-  const ck = cacheKey(lat, lon, r, n);
+  const ck = cacheKey(lat, lon, r, n, off);
   const hit = cache.get(ck);
   if (hit && Date.now() - hit.at < TTL_MS) return { ...hit.payload, cached: true };
 
   // `nearby` already returns results by proximity. An explicit sortKey=distance is NOT a
   // valid value and made Windy reject the whole request with HTTP 400.
   const url = `${BASE}?nearby=${lat.toFixed(4)},${lon.toFixed(4)},${r}` +
-    `&limit=${n}&offset=0&include=images,location,player`;
+    `&limit=${n}&offset=${off}&include=images,location,player`;
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 8000);
