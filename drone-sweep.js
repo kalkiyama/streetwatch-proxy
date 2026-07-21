@@ -24,15 +24,29 @@ const MANNED_RE = /(CESSNA|PIPER|BEECH|CIRRUS|DIAMOND|MOONEY|ROBINSON|BELL|AIRBU
 
 // What kind of contact is this, why, and how much should we trust it?
 // Returns null for ordinary civil traffic.
+// Classification is INHERITED, never verified by us. Three independent sources, each with its
+// own failure mode, and none of them constitutes proof:
+//
+//   registry_type  a third-party aircraft registry says this hex is an RQ-4, MQ-9, etc.
+//                  Fails on stale records and reassigned hex codes.
+//   self_declared  the aircraft itself broadcasts ADS-B emitter category B6 ("unmanned").
+//                  Fails on misconfigured transponders — manned aircraft do broadcast B6.
+//   database_flag  airplanes.live's curated database marks this hex as military.
+//                  That is their editorial judgement; contractors and state aircraft blur it.
+//
+// And beneath all three: ADS-B IS UNAUTHENTICATED. It is a cooperative broadcast system with
+// no signature and no verification — anyone with a transmitter can assert anything. We report
+// what was broadcast and who says what about it. We never claim to have confirmed an identity,
+// so the old "confirmed" label has been replaced with the actual basis.
 function classify(a) {
   if (a.typeCode && UAV_TYPE_RE.test(a.typeCode))
-    return { kind: "uav", why: `type ${a.typeCode}`, confidence: "confirmed" };
+    return { kind: "uav", why: `registry type ${a.typeCode}`, confidence: "registry_type" };
   if (a.category === "B6") {
     if (a.desc && MANNED_RE.test(a.desc))
-      return { kind: "uav", why: `B6 claimed · registry says ${a.desc}`, confidence: "disputed" };
-    return { kind: "uav", why: "ADS-B category B6", confidence: "confirmed" };
+      return { kind: "uav", why: `broadcasts UAV category, but registry says ${a.desc}`, confidence: "disputed" };
+    return { kind: "uav", why: "aircraft broadcasts UAV category (B6)", confidence: "self_declared" };
   }
-  if (a.military) return { kind: "military", why: "military registry flag", confidence: "confirmed" };
+  if (a.military) return { kind: "military", why: "flagged military in aircraft database", confidence: "database_flag" };
   return null;
 }
 

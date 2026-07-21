@@ -42,7 +42,9 @@ const server = createServer().listen(0, async () => {
     assert.ok(j.counts && j.counts.uav >= 1 && j.counts.military >= 1, "counts by kind");
     const cess = j.drones.find((d) => d.id === "abcd01");
     assert.ok(cess && cess.confidence === "disputed", "B6-claiming Cessna marked disputed");
-    assert.ok(j.drones.find((d) => d.id === "ae1234").confidence === "confirmed", "real B6 stays confirmed");
+    // ae1234 carries BOTH a registry type (MQ9) and category B6; registry type wins, and the
+    // label now says so. Under the old blanket "confirmed" this precedence was invisible.
+    assert.ok(j.drones.find((d) => d.id === "ae1234").confidence === "registry_type", "registry type takes precedence over self-declared category");
     assert.ok(j.counts.disputed >= 1, "disputed counted");
     assert.ok(j.drones[0].site && j.drones[0].country, "sighting carries site + country");
     console.log(`PASS  /api/drones -> ${j.count} live drone(s) across ${j.sweep.sites} sites`);

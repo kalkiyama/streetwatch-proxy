@@ -370,7 +370,10 @@ const USV_NAME = /\b(SAILDRONE|SD\s?\d{3,4}|DRIX|USV|UNCREWED|UNMANNED|MARINER\s
 
 function classifyUsv(v) {
   const name = String(v.name || "") + " " + String(v.callSign || "");
-  if (USV_NAME.test(name)) return { usv: true, usvConfidence: "confirmed" };
+  // "name_match", not "confirmed": this matches a vessel NAME against a hand-curated list of
+  // known uncrewed-vessel programmes. A name is what a vessel calls itself over AIS — it is
+  // evidence, not verification, and AIS is unauthenticated in exactly the way ADS-B is.
+  if (USV_NAME.test(name)) return { usv: true, usvConfidence: "name_match" };
 
   const small = Number.isFinite(v.lengthM) && v.lengthM > 0 && v.lengthM <= 25;
   const unspecified = v.typeCode == null || v.typeCode === 0 || (v.typeCode >= 90 && v.typeCode <= 99);
@@ -588,7 +591,7 @@ async function getUsvFleet(lat, lon) {
     note: "Most military USVs broadcast no AIS at all. This shows the research and commercial fleet that does, plus small unidentified hulls flagged as possible.",
     submarineNote: "Submarines cannot be tracked. AIS is VHF radio, which does not travel through seawater, so no submerged vessel of any kind transmits a position. The support-vessel layer shows surface ships associated with submarine operations — infrastructure, not submarines.",
     count: out.length,
-    confirmed: out.filter((v) => v.usvConfidence === "confirmed").length,
+    nameMatch: out.filter((v) => v.usvConfidence === "name_match").length,
     possible: out.filter((v) => v.usvConfidence === "possible").length,
     vessels: out.slice(0, 300),
   };
