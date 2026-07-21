@@ -207,6 +207,15 @@ You must include, in your own words, that these counts come only from aircraft b
 ADS-B, so aircraft with transponders switched off are not represented, and that a difference in
 counts may reflect observation coverage as easily as activity.
 
+CRITICAL — ABSENCE IS NOT EVIDENCE. Coverage is wildly uneven. The receiver network is
+volunteer-fed and dense over North America, Europe and Japan; it is sparse over Russia, China,
+Central Asia, Africa, and most oceans. Military aircraft in many countries do not broadcast at
+all. Therefore you must NEVER write or imply that a region is quiet, inactive, or has no
+military aviation because few or no contacts were recorded there. A low or zero count in such a
+region means only that little was VISIBLE to public ADS-B. If a region with known sparse
+coverage appears in the data with low counts, either omit it or state explicitly that the
+figure reflects visibility rather than activity.
+
 If told the archive does not yet cover the comparison window, say plainly that no
 week-on-week comparison is possible yet and do not describe anything as new, rising or a first
 appearance.
