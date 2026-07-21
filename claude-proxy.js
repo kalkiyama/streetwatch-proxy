@@ -41,12 +41,18 @@ function hash(obj) {
 
 function configured() { return !!KEY; }
 
-async function ask({ system, user, maxTokens = 300, cacheKey }) {
+async function ask({ system, user, maxTokens = 300, cacheKey, cacheOnly = false }) {
   rollDay();
   if (!KEY) return { ok: false, reason: "not_configured" };
 
   if (cacheKey) {
     const hit = cache.get(cacheKey);
+    if (!hit && cacheOnly) {
+      // The caller's address is in cache-only mode (rate-limit escalation). Previously
+      // generated analyses stay available; NEW model calls are refused until the window ends.
+      // Same contract every other failure uses, so routes surface it without special cases.
+      return { ok: false, reason: "cache_only" };
+    }
     if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { ok: true, text: hit.text, cached: true };
   }
   if (spend.calls >= DAILY_CAP) return { ok: false, reason: "daily_cap_reached" };
@@ -108,7 +114,7 @@ Rules you must follow:
 - If the data is thin (few points, short duration), say the reading is tentative.
 - No preamble, no bullet points, no headings. Plain prose only.`;
 
-async function narrateTrack({ geo, contact }) {
+async function narrateTrack({ geo, contact }, opts = {}) {
   const facts = {
     verdict: geo.verdict, points: geo.points, durationMin: geo.durationMin,
     pathNm: geo.pathNm, netNm: geo.netNm, straightness: geo.straightness,
@@ -128,7 +134,7 @@ Notes on the measurements:
 - These positions come only from the aircraft's own ADS-B broadcasts, sampled by a sweep that revisits each airspace periodically, so gaps are expected.
 
 Explain this flight profile.`;
-  return ask({ system: TRACK_SYSTEM, user, maxTokens: 220, cacheKey: "trk:" + hash(facts) });
+  return ask({ system: TRACK_SYSTEM, user, maxTokens: 220, cacheKey: "trk:" + hash(facts) , cacheOnly: !!opts.cacheOnly });
 }
 
 // ---------------------------------------------------------------------------
@@ -156,12 +162,13 @@ Guidance:
 - Named seas and regions become a bbox. Black Sea is [40.9,27.4,46.6,41.8]. Baltic Sea is [53.9,9.4,65.9,30.3]. South China Sea is [3.0,105.0,23.0,121.0]. Persian Gulf is [23.5,47.5,30.5,57.0]. Mediterranean is [30.2,-6.0,45.8,36.2]. Norwegian coast is [57.9,4.0,71.4,31.1].
 - If the request is vague, return only "text" with the user's key terms.`;
 
-async function parseSearch(query) {
+async function parseSearch(query, opts = {}) {
   const r = await ask({
     system: SEARCH_SYSTEM,
     user: String(query || "").slice(0, 400),
     maxTokens: 200,
     cacheKey: "qry:" + hash(String(query || "").toLowerCase().trim()),
+    cacheOnly: !!opts.cacheOnly,
   });
   if (!r.ok) return r;
   let filter = null;
@@ -206,8 +213,9 @@ appearance.
 
 Never infer intent, mission, escalation, or geopolitical meaning. Report what was observed.`;
 
-async function writeDigest({ windowDays, top, topNear, risers, newSites, totals, sweepRadiusNm = 250,
-                             nearRadiusNm = 25, coversPrevWindow = true, archiveAgeHours = null }) {
+async function writeDigest(args, opts = {}) {
+  const { windowDays, top, topNear, risers, newSites, totals, sweepRadiusNm = 250,
+                             nearRadiusNm = 25, coversPrevWindow = true, archiveAgeHours = null } = args;
   const user =
 `Archive window: last ${windowDays} days.
 Each figure below counts DISTINCT aircraft seen within ${sweepRadiusNm}nm of the named site — a region, not the base itself.
@@ -226,7 +234,7 @@ ${coversPrevWindow
   : `NO COMPARISON AVAILABLE: the archive only reaches back ${archiveAgeHours != null ? archiveAgeHours + " hours" : "less than the comparison window"}, which is shorter than the previous ${windowDays}-day window. Do not describe anything as new, rising, or a first appearance. State that week-on-week comparison is not yet possible.`}
 
 Write the briefing.`;
-  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, topNear, risers, newSites, totals, coversPrevWindow }) });
+  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, topNear, risers, newSites, totals, coversPrevWindow }) , cacheOnly: !!opts.cacheOnly });
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +252,7 @@ link is implied or observable from public data, and that both datasets are incom
 
 Never suggest an operation, exercise, response, or intent. Never name a unit or adversary.`;
 
-async function describeCorrelations({ windowDays, pairs }) {
+async function describeCorrelations({ windowDays, pairs }, opts = {}) {
   const user =
 `Window: last ${windowDays} days.
 
@@ -252,7 +260,7 @@ Computed co-occurrences (an air airspace and a marine contact within 150nm and 7
 ${pairs.map((p) => `- ${p.site}: ${p.airContacts} air contacts; nearby marine: ${p.vessel} (${p.vesselKind}) at ${p.distanceNm}nm, ${p.daysApart} days apart`).join("\n") || "- none"}
 
 Describe what was observed.`;
-  return ask({ system: CORR_SYSTEM, user, maxTokens: 320, cacheKey: "cor:" + hash({ windowDays, pairs }) });
+  return ask({ system: CORR_SYSTEM, user, maxTokens: 320, cacheKey: "cor:" + hash({ windowDays, pairs }) , cacheOnly: !!opts.cacheOnly });
 }
 
 function status() {
