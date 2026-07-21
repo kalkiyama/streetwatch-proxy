@@ -28,6 +28,23 @@ const geometry = require("./geometry.js");
 //                            analyses (cache) but no NEW model calls
 // The computed figures (SQL) are never gated — only the language-model call is. Cache hits
 // cost nothing, so an address in phase 2 still has a fully working, honest app.
+// Daily unique-visitor estimate for /metrics. Privacy design: the raw IP is hashed with a
+// salt that ROTATES at UTC midnight and is never persisted, so yesterday's hashes cannot be
+// linked to today's and no stored value can be reversed to an address. This yields a COUNT,
+// not a log. Honest caveat carried in /metrics itself: NAT and mobile churn make any IP-based
+// figure approximate.
+const crypto = require("crypto");
+let uniqDay = "";
+let uniqSalt = "";
+let uniqSet = new Set();
+function noteVisitor(ip) {
+  const day = new Date().toISOString().slice(0, 10);
+  if (day !== uniqDay) { uniqDay = day; uniqSalt = crypto.randomBytes(16).toString("hex"); uniqSet = new Set(); }
+  if (uniqSet.size < 200000) {
+    uniqSet.add(crypto.createHash("sha256").update(uniqSalt + ip).digest("base64").slice(0, 12));
+  }
+}
+
 const AI_WIN_MS = 10 * 60 * 1000;
 const AI_MAX = 8;
 const AI_HOLD_MS = 5 * 60 * 1000;
@@ -176,6 +193,8 @@ async function handler(req, res) {
     const mem = process.memoryUsage();
     return send(res, 200, {
       uptimeSec: Math.round(process.uptime()),
+      uniqueApiVisitorsToday: uniqSet.size,
+      uniqueVisitorsNote: "distinct IPs hitting the API today, salted-hash counted, salt rotates at UTC midnight, raw IPs never stored; NAT and mobile churn make this approximate",
       memoryMB: { rss: +(mem.rss / 1048576).toFixed(1), heapUsed: +(mem.heapUsed / 1048576).toFixed(1) },
       aircraft: {
         requests: a.requests || 0,
@@ -206,6 +225,11 @@ async function handler(req, res) {
   // which a page of users (or one scripted clicker) could exhaust in minutes. Identical
   // requests are served from cache upstream and do not consume model calls, so this only
   // bites genuinely new generations.
+  {
+    const fwd0 = req.headers["x-forwarded-for"];
+    noteVisitor((typeof fwd0 === "string" && fwd0.split(",")[0].trim()) || req.socket.remoteAddress || "?");
+  }
+
   let aiOpts = {};
   if (p.startsWith("/api/ai/") && p !== "/api/ai/status") {
     const fwd = req.headers["x-forwarded-for"];
