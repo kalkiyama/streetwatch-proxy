@@ -252,7 +252,8 @@ async function handler(req, res) {
       Number(u.searchParams.get("lat")),
       Number(u.searchParams.get("lon")),
       Number(u.searchParams.get("radius") || 50),
-      Number(u.searchParams.get("limit") || 12)), origin);
+      Number(u.searchParams.get("limit") || 12),
+      Number(u.searchParams.get("offset") || 0)), origin);
   }
 
   if (p === "/api/usv") {
