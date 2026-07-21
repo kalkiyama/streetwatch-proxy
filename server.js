@@ -20,6 +20,21 @@ const webcams = require("./webcams-proxy.js");
 const ai = require("./claude-proxy.js");
 const geometry = require("./geometry.js");
 
+// Sliding-window per-IP allowance for /api/ai/* — 12 generations per 10 minutes.
+const AI_IP_WINDOW_MS = 10 * 60 * 1000;
+const AI_IP_MAX = 12;
+const aiHits = new Map();
+function aiAllowed(ip) {
+  const now = Date.now();
+  let arr = (aiHits.get(ip) || []).filter((t) => now - t < AI_IP_WINDOW_MS);
+  if (arr.length >= AI_IP_MAX) { aiHits.set(ip, arr); return false; }
+  arr.push(now); aiHits.set(ip, arr);
+  if (aiHits.size > 5000) {                        // bounded memory under address churn
+    for (const [k, v] of aiHits) if (!v.length || now - v[v.length - 1] > AI_IP_WINDOW_MS) aiHits.delete(k);
+  }
+  return true;
+}
+
 // site name -> centre, used wherever a distance-from-site has to be computed
 function siteCoordMap() {
   const m = {};
@@ -153,6 +168,22 @@ async function handler(req, res) {
   // Every one of these computes the facts first and asks Claude only for English.
   // Responses always carry the computed data alongside the prose so a reader can
   // check the words against the numbers.
+
+  // AI endpoints get their own per-IP budget on top of the global rate limit. The global
+  // limit protects the process; this protects the model budget — the daily cap is 500 calls,
+  // which a page of users (or one scripted clicker) could exhaust in minutes. Identical
+  // requests are served from cache upstream and do not consume model calls, so this only
+  // bites genuinely new generations.
+  if (p.startsWith("/api/ai/") && p !== "/api/ai/status") {
+    const fwd = req.headers["x-forwarded-for"];
+    const ip = (typeof fwd === "string" && fwd.split(",")[0].trim()) || req.socket.remoteAddress || "?";
+    if (!aiAllowed(ip)) {
+      return send(res, 429, {
+        error: "rate_limited",
+        note: "You have generated several analyses in a short time. Please wait a few minutes — repeated requests for the same window are served from cache and cost nothing.",
+      }, origin);
+    }
+  }
 
   if (p === "/api/ai/status") return send(res, 200, ai.status(), origin);
 
