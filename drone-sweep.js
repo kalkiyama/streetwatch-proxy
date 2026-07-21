@@ -43,6 +43,79 @@ const MAX_TRACKED = 3000;              // memory bound
 
 // Publicly known UAV airspaces (mirrors the UAV Watch catalog entries).
 const SITES = [
+
+  // ---- Russia, China and Central Asia ----
+  //
+  // Added for even-handed coverage: the watch should apply the same method everywhere rather
+  // than only to NATO airspace. Every entry below is an internationally published airport or
+  // region centre with an ICAO identifier, the same reference data any flight-planning tool
+  // uses — nothing here is derived from imagery or private sources.
+  //
+  // IMPORTANT, and surfaced in the UI: expect these to read sparse or empty. Russian and
+  // Chinese military aircraft very largely do not broadcast ADS-B, and the receiver network
+  // inside both countries is thin because it is volunteer-fed. An empty airspace here means
+  // "not visible to public ADS-B", NOT "no activity". Civil traffic is the main thing that
+  // will appear.
+
+  // Russia — west and Arctic
+  ["Moscow region", "Russia", 55.750, 37.620],
+  ["St Petersburg", "Russia", 59.800, 30.263],
+  ["Kaliningrad", "Russia", 54.890, 20.593],
+  ["Murmansk / Kola", "Russia", 68.782, 32.751],
+  ["Arkhangelsk", "Russia", 64.600, 40.717],
+  ["Voronezh", "Russia", 51.814, 39.230],
+  ["Rostov-on-Don", "Russia", 47.258, 39.818],
+  ["Volgograd", "Russia", 48.782, 44.345],
+  ["Sochi / Black Sea", "Russia", 43.449, 39.957],
+  ["Crimea region", "Russia/Ukraine (disputed)", 45.052, 34.100],
+  ["Kazan", "Russia", 55.606, 49.279],
+  ["Samara", "Russia", 53.505, 50.164],
+  ["Yekaterinburg", "Russia", 56.743, 60.803],
+  ["Rostov / Azov coast", "Russia", 47.100, 38.500],
+
+  // Russia — Siberia and Far East
+  ["Novosibirsk", "Russia", 55.013, 82.651],
+  ["Krasnoyarsk", "Russia", 56.173, 92.493],
+  ["Irkutsk / Baikal", "Russia", 52.268, 104.389],
+  ["Yakutsk", "Russia", 62.093, 129.771],
+  ["Khabarovsk", "Russia", 48.528, 135.188],
+  ["Vladivostok / Primorye", "Russia", 43.399, 132.148],
+  ["Yuzhno-Sakhalinsk", "Russia", 46.889, 142.718],
+  ["Petropavlovsk-Kamchatsky", "Russia", 53.168, 158.454],
+  ["Anadyr / Chukotka", "Russia", 64.735, 177.741],
+
+  // China
+  ["Beijing region", "China", 40.080, 116.585],
+  ["Tianjin / Bohai", "China", 39.124, 117.346],
+  ["Shenyang / Liaoning", "China", 41.640, 123.483],
+  ["Dalian / Yellow Sea", "China", 38.966, 121.539],
+  ["Qingdao / Shandong", "China", 36.266, 120.374],
+  ["Shanghai region", "China", 31.197, 121.336],
+  ["Fuzhou / Taiwan Strait", "China", 25.935, 119.663],
+  ["Xiamen / Taiwan Strait", "China", 24.544, 118.128],
+  ["Guangzhou / Pearl Delta", "China", 23.392, 113.299],
+  ["Hong Kong", "China", 22.309, 113.915],
+  ["Sanya / Hainan", "China", 18.303, 109.412],
+  ["Kunming", "China", 25.102, 102.929],
+  ["Chengdu", "China", 30.579, 103.947],
+  ["Xi'an", "China", 34.447, 108.752],
+  ["Lanzhou", "China", 36.515, 103.620],
+  ["Urumqi / Xinjiang", "China", 43.907, 87.474],
+  ["Kashgar", "China", 39.543, 76.020],
+  ["Lhasa / Tibet", "China", 29.298, 90.912],
+  ["Harbin", "China", 45.623, 126.250],
+
+  // Central Asia, Caucasus and Caspian
+  ["Astana", "Kazakhstan", 51.022, 71.467],
+  ["Almaty", "Kazakhstan", 43.352, 77.041],
+  ["Aktau / Caspian", "Kazakhstan", 43.860, 51.092],
+  ["Bishkek", "Kyrgyzstan", 43.061, 74.478],
+  ["Dushanbe", "Tajikistan", 38.543, 68.825],
+  ["Samarkand", "Uzbekistan", 39.700, 66.984],
+  ["Ashgabat", "Turkmenistan", 37.987, 58.361],
+  ["Baku / Caspian", "Azerbaijan", 40.467, 50.047],
+  ["Yerevan", "Armenia", 40.147, 44.396],
+  ["Tbilisi", "Georgia", 41.669, 44.955],
   // ---- North America ----
   ["Creech / Nellis", "United States", 36.587, -115.673],
   ["Edwards AFB / Plant 42", "United States", 34.905, -117.884],
