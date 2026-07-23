@@ -745,7 +745,13 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
       sites: SITES.length,
       // Exposed so the UI can STATE the real coverage instead of hardcoding a figure that goes
       // stale silently every time a site is added — which it did twice in one night.
-      countries: new Set(SITES.map((x) => x[1])).size,
+      //
+      // Two traps here, both hit on the first attempt: SITES already CONTAINS the deep-grid cells
+      // (they are pushed in below), so sites+deepCells double-counts them; and every grid cell
+      // carries the country string 'Deep sweep', which counted as a 173rd country. Named sites and
+      // real countries are therefore computed by excluding the grid explicitly.
+      namedSites: SITES.filter((x) => x[1] !== 'Deep sweep').length,
+      countries: new Set(SITES.filter((x) => x[1] !== 'Deep sweep').map((x) => x[1])).size,
       visited: Math.max(0, (queue.length ? passSize - queue.length : passSize)),
       passSize,
       hotSites: tiers.hot,                 // airspaces actually active
