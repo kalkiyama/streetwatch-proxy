@@ -361,6 +361,21 @@ async function handler(req, res) {
     return send(res, 200, await ais.getUsvFleet(lat, lon), origin);
   }
 
+  if (p === "/api/drones/coverage") {
+    const u = new URL(req.url, "http://localhost");
+    const rows = await archive.coverage({
+      days: u.searchParams.get("days"),
+      cell: u.searchParams.get("cell"),
+    });
+    if (!rows) return send(res, 200, { error: "archive_unavailable" }, origin);
+    return send(res, 200, {
+      count: rows.length,
+      cells: rows,
+      maxPoints: rows.reduce((m, r) => Math.max(m, r.points), 1),
+      note: "Where StreetWatch has actually recorded contacts. An empty area means no ADS-B reception, no monitored airspace nearby, or no traffic — this data cannot distinguish between them. Derived from observations only; nothing is modelled or predicted.",
+    }, origin);
+  }
+
   if (p === "/api/drones/heat") {
     const u = new URL(req.url, "http://localhost");
     const rows = await archive.heat({ days: u.searchParams.get("days"), siteCoords: siteCoordMap() });
@@ -371,6 +386,7 @@ async function handler(req, res) {
       .map((r) => ({ ...r, lat: sites[r.site].lat, lon: sites[r.site].lon }));
     const max = out.reduce((m, r) => Math.max(m, r.contacts), 0) || 1;
     return send(res, 200, {
+      archiveAgeHours: await archive.ageHours(),
       windowDays: Number(u.searchParams.get("days")) || 7,
       maxContacts: max,
       // maxima per radius so the client can scale colour correctly at whichever it displays
