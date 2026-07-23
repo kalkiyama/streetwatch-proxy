@@ -391,6 +391,9 @@ async function handler(req, res) {
       maxContacts: max,
       // maxima per radius so the client can scale colour correctly at whichever it displays
       maxByRadius: {
+        // "field" ranks by aircraft actually low and close, so the colour can answer
+        // "which bases are busy AT THE FIELD" instead of "which sit in busy airspace".
+        field: Math.max(1, ...out.map((r) => r.terminal_contacts || 0)),
         25: Math.max(1, ...out.map((r) => r.c25 || 0)),
         100: Math.max(1, ...out.map((r) => r.c100 || 0)),
         250: max,
