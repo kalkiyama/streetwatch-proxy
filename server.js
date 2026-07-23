@@ -19,6 +19,7 @@ const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
 const ai = require("./claude-proxy.js");
 const geometry = require("./geometry.js");
+const advisories = require("./airspace-advisories.js");
 
 // Escalating per-IP gate for /api/ai/* (passcode-lock pattern):
 //   phase 0  normal        — up to 8 fresh generations per rolling 10 minutes
@@ -361,6 +362,10 @@ async function handler(req, res) {
     return send(res, 200, await ais.getUsvFleet(lat, lon), origin);
   }
 
+  if (p === "/api/airspace/advisories") {
+    return send(res, 200, advisories.list(), origin);
+  }
+
   if (p === "/api/drones/coverage") {
     const u = new URL(req.url, "http://localhost");
     const rows = await archive.coverage({
@@ -436,7 +441,9 @@ async function handler(req, res) {
       return send(res, 502, { error: "upstream_unavailable" }, origin);
     }
   }
-  return send(res, 404, { error: "not_found", routes: ["/api/aircraft", "/api/vessels", "/api/drones", "/api/drones/track", "/health"] }, origin);
+  // The old hardcoded list was written early and never updated, so a 404 advertised five
+  // routes while a dozen others worked — a small dishonesty in the error path itself.
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/webcams", "/health", "/metrics"] }, origin);
 }
 
 function createServer() { return http.createServer(handler); }
@@ -455,5 +462,6 @@ if (require.main === module) {
     .then(() => droneSweep.seedTiersFromArchive(archive))
     .catch((e) => console.warn("[boot] tier seed failed:", e.message))
     .finally(() => droneSweep.start());
+  advisories.start();          // 6-hourly HEAD check on advisory source documents
 }
 module.exports = { createServer };
