@@ -58,6 +58,42 @@ const MAX_TRACKED = 3000;              // memory bound
 // Publicly known UAV airspaces (mirrors the UAV Watch catalog entries).
 const SITES = [
 
+  // ---- Iran, North Korea and their approaches ----
+  //
+  // EXPECT SILENCE INSIDE BOTH. North Korea has virtually no ADS-B receivers, its military does
+  // not broadcast, and civil traffic is minimal. Iran's civil fleet broadcasts but this watch only
+  // archives military/UAV. So these airspaces will usually read empty, and empty here means
+  // "not visible to public ADS-B", never "nothing happened" (the standing absence rule).
+  //
+  // The APPROACHES are where activity is actually observable: allied ISR and patrol aircraft
+  // operating in international airspace nearby do frequently broadcast. Those sites are the ones
+  // that will produce contacts, and they are what makes this coverage worth having.
+
+  // Iran — internal (published international airports)
+  ["Tehran Mehrabad", "Iran", 35.689, 51.313],
+  ["Isfahan", "Iran", 32.750, 51.861],
+  ["Bandar Abbas", "Iran", 27.218, 56.378],
+  ["Bushehr", "Iran", 28.945, 50.835],
+  ["Chabahar", "Iran", 25.443, 60.382],
+  ["Mashhad", "Iran", 36.235, 59.641],
+  ["Tabriz", "Iran", 38.134, 46.235],
+
+  // Iran — approaches (international airspace and waters, where activity IS observable)
+  ["Strait of Hormuz", "International", 26.567, 56.250],
+  ["Persian Gulf central", "International", 27.000, 51.500],
+  ["Gulf of Oman", "International", 24.500, 58.500],
+
+  // North Korea — internal (published airports)
+  ["Pyongyang Sunan", "North Korea", 39.224, 125.670],
+  ["Wonsan Kalma", "North Korea", 39.166, 127.486],
+  ["Chongjin", "North Korea", 41.771, 129.667],
+  ["Sondok", "North Korea", 39.745, 127.474],
+
+  // North Korea — approaches (where allied ISR is actually visible)
+  ["Sea of Japan / East Sea", "International", 40.000, 132.000],
+  ["Yellow Sea approach", "International", 37.500, 124.000],
+  ["Korea Strait", "International", 34.500, 129.000],
+
   // ---- Russia, China and Central Asia ----
   //
   // Added for even-handed coverage: the watch should apply the same method everywhere rather
