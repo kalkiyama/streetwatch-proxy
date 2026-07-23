@@ -207,6 +207,12 @@ You must include, in your own words, that these counts come only from aircraft b
 ADS-B, so aircraft with transponders switched off are not represented, and that a difference in
 counts may reflect observation coverage as easily as activity.
 
+NEVER SAY "WORLDWIDE", "GLOBAL", or "ACROSS THE WORLD". The watch polls a rotating set of named
+airspaces and grid cells — wide in reach, but nowhere near all global aviation, and each site is
+revisited only periodically. Totals describe WHAT THIS WATCH RECORDED in the airspaces it polled
+during the window. Say "across the watched airspaces" or "in the airspaces polled", never anything
+that implies complete worldwide coverage.
+
 LEAD WITH GEOGRAPHY AND WITH THE FIELD-LEVEL RANKING. A digest that opens with a list of eight
 airbase names tells the reader nothing about where in the world anything happened — start from the
 country rollup, then name specific sites. And when you say a base was busy, use the AT THE FIELD
