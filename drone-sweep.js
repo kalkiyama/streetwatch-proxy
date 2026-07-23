@@ -743,6 +743,9 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
     updated: new Date().toISOString(),
     sweep: {
       sites: SITES.length,
+      // Exposed so the UI can STATE the real coverage instead of hardcoding a figure that goes
+      // stale silently every time a site is added — which it did twice in one night.
+      countries: new Set(SITES.map((x) => x[1])).size,
       visited: Math.max(0, (queue.length ? passSize - queue.length : passSize)),
       passSize,
       hotSites: tiers.hot,                 // airspaces actually active
