@@ -207,6 +207,14 @@ You must include, in your own words, that these counts come only from aircraft b
 ADS-B, so aircraft with transponders switched off are not represented, and that a difference in
 counts may reflect observation coverage as easily as activity.
 
+CRITICAL — OVERFLIGHT IS NOT USE. A contact counted "at" a site may simply have flown over it.
+One aircraft crossing a continent passes within range of many sites and is counted at each. When a
+site has a terminal figure (aircraft observed within 10nm BELOW 10,000ft — consistent with
+arriving or departing), that is the figure that speaks to activity AT the base; the larger contact
+count describes the surrounding airspace. Never describe a site as busy or active on the strength
+of the regional count alone. And the terminal figure is an INFERENCE from altitude and proximity,
+not an observed landing — say "consistent with" or "suggests", never "landed" or "took off".
+
 CRITICAL — ABSENCE IS NOT EVIDENCE. Coverage is wildly uneven. The receiver network is
 volunteer-fed and dense over North America, Europe and Japan; it is sparse over Russia, China,
 Central Asia, Africa, and most oceans. Military aircraft in many countries do not broadcast at
