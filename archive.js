@@ -262,8 +262,25 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
            LEFT JOIN unnest($2::text[], $3::float8[], $4::float8[]) AS s(site, slat, slon)
                   ON s.site = t.site
           WHERE t.ts > now() - ($1 || ' days')::interval AND t.site IS NOT NULL
+       ),
+       -- Each aircraft's LOWEST observed altitude within 25nm. Counting distinct aircraft per
+       -- band directly double-counts anything that descends (12,000ft on one sweep, 8,000 on the
+       -- next appears in two bands) — which is why 72+5+0 read as 77 against a total of 76.
+       -- Bucketing by the minimum gives exactly one band per aircraft, so the bands sum.
+       lo AS (
+         SELECT site, icao, min(alt_ft) AS min_alt
+           FROM j
+          WHERE dist_nm <= 25 AND alt_ft IS NOT NULL
+          GROUP BY site, icao
+       ),
+       bands AS (
+         SELECT site,
+                count(*) FILTER (WHERE min_alt < 10000)::int                      AS low25,
+                count(*) FILTER (WHERE min_alt >= 10000 AND min_alt < 25000)::int AS mid25,
+                count(*) FILTER (WHERE min_alt >= 25000)::int                     AS high25
+           FROM lo GROUP BY site
        )
-       SELECT site,
+       SELECT j.site AS site,
               max(country) AS country,
               count(*)::int AS points,
               count(DISTINCT icao)::int AS contacts,
@@ -290,16 +307,16 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
               -- inflating every "busy base" figure.
               -- A clean PARTITION of the aircraft within 25nm by altitude band. Three numbers that
               -- do not sum to the whole make every figure look untrustworthy; these do sum.
-              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft < 10000)::int AS low25,
-              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft >= 10000 AND alt_ft < 25000)::int AS mid25,
-              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft >= 25000)::int AS high25,
+              COALESCE(max(b.low25), 0)  AS low25,
+              COALESCE(max(b.mid25), 0)  AS mid25,
+              COALESCE(max(b.high25), 0) AS high25,
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft >= 25000)::int AS overflight_contacts,
               count(*) FILTER (WHERE alt_ft IS NOT NULL)::int AS points_with_alt,
               max(ts) AS last_seen,
               round(EXTRACT(EPOCH FROM (max(ts) - min(ts))) / 3600.0)::int AS span_hours
-         FROM j
-        GROUP BY site
-        ORDER BY count(DISTINCT icao) DESC`
+         FROM j LEFT JOIN bands b ON b.site = j.site
+        GROUP BY j.site
+        ORDER BY count(DISTINCT j.icao) DESC`
     : `SELECT site, max(country) AS country, count(*)::int AS points,
               count(DISTINCT icao)::int AS contacts,
               count(DISTINCT icao) FILTER (WHERE kind = 'uav')::int AS uav,
@@ -457,5 +474,17 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
   };
 }
 
+// How much history actually exists. The day-selector offers 1/7/30/90d, but a window can only
+// ever show what has been recorded — a "7 days" chip over a 3-day-old archive is a promise the
+// data cannot keep unless the UI says so.
+async function ageHours() {
+  if (!ready) return null;
+  const { rows } = await pool.query(`SELECT MIN(ts) AS earliest, MAX(ts) AS latest FROM drone_tracks`);
+  const earliest = rows[0] && rows[0].earliest ? new Date(rows[0].earliest).getTime() : null;
+  if (!earliest) return 0;
+  return Math.round((Date.now() - earliest) / 3600000);
+}
+
 module.exports = {
+  ageHours,
   coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS };
