@@ -301,8 +301,12 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
               -- the semantic that separates "operating here" from "flew over here". Labelled as
               -- an INFERENCE: low and close is consistent with arriving/departing, not proof of
               -- a landing (we observe positions, never movements).
-              count(DISTINCT icao) FILTER (WHERE dist_nm <= 10 AND alt_ft IS NOT NULL AND alt_ft < 10000)::int AS terminal_contacts,
-              count(*) FILTER (WHERE dist_nm <= 10 AND alt_ft IS NOT NULL AND alt_ft < 10000)::int AS terminal_points,
+              -- 4,000ft, not 10,000. On a standard 3-degree approach an arriving aircraft is near
+              -- 3,200ft at 10nm out, and circuit traffic is 1,000-1,500ft; a 10,000ft ceiling was
+              -- still catching transits. CAVEAT recorded: alt_ft is barometric (MSL) and we do not
+              -- store field elevation, so this proxy is weakest at high-elevation airfields.
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 10 AND alt_ft IS NOT NULL AND alt_ft < 4000)::int AS terminal_contacts,
+              count(*) FILTER (WHERE dist_nm <= 10 AND alt_ft IS NOT NULL AND alt_ft < 4000)::int AS terminal_points,
               -- HIGH OVERFLIGHT: inside 25nm but at cruise. These are the ones that were quietly
               -- inflating every "busy base" figure.
               -- A clean PARTITION of the aircraft within 25nm by altitude band. Three numbers that
