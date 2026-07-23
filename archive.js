@@ -288,6 +288,11 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
               count(*) FILTER (WHERE dist_nm <= 10 AND alt_ft IS NOT NULL AND alt_ft < 10000)::int AS terminal_points,
               -- HIGH OVERFLIGHT: inside 25nm but at cruise. These are the ones that were quietly
               -- inflating every "busy base" figure.
+              -- A clean PARTITION of the aircraft within 25nm by altitude band. Three numbers that
+              -- do not sum to the whole make every figure look untrustworthy; these do sum.
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft < 10000)::int AS low25,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft >= 10000 AND alt_ft < 25000)::int AS mid25,
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft >= 25000)::int AS high25,
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft >= 25000)::int AS overflight_contacts,
               count(*) FILTER (WHERE alt_ft IS NOT NULL)::int AS points_with_alt,
               max(ts) AS last_seen,
