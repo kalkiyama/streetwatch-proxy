@@ -203,6 +203,36 @@ async function track(icao, days = 90) {
 
 // Activity per airspace over a window — the basis of the heat map.
 // Intensity is measured from our own observations, not asserted from outside sources.
+// Observed coverage — where StreetWatch has ACTUALLY recorded contacts, binned into a grid.
+//
+// This is the honest inverse of the archive: instead of "what did we see", it answers "where
+// can we see at all". The gaps matter as much as the fills — an empty cell means no ADS-B
+// reception, no sweep site nearby, or genuinely no traffic, and the three are indistinguishable
+// from this data alone. That ambiguity is stated in the UI rather than smoothed over. This is
+// derived entirely from our own observations; it models nothing and predicts nothing.
+async function coverage({ days = 7, cell = 2 } = {}) {
+  if (!ready) return null;
+  const d = Math.min(Math.max(Number(days) || 7, 1), RETAIN_DAYS);
+  const c = Math.min(Math.max(Number(cell) || 2, 1), 10);     // grid size in degrees
+  const { rows } = await pool.query(
+    `SELECT floor(lat / $2) * $2 AS lat0,
+            floor(lon / $2) * $2 AS lon0,
+            count(*)::int              AS points,
+            count(DISTINCT icao)::int  AS aircraft,
+            max(ts)                    AS last_seen
+       FROM drone_tracks
+      WHERE ts > now() - ($1 || ' days')::interval
+      GROUP BY 1, 2
+      ORDER BY count(*) DESC
+      LIMIT 4000`,
+    [String(d), c]
+  );
+  return rows.map((r) => ({
+    lat: Number(r.lat0), lon: Number(r.lon0), cellDeg: c,
+    points: r.points, aircraft: r.aircraft, lastSeen: r.last_seen,
+  }));
+}
+
 async function heat({ days = 7, siteCoords = {} } = {}) {
   if (!ready) return null;
   const d = Math.min(Math.max(Number(days) || 7, 1), RETAIN_DAYS);
@@ -223,7 +253,7 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
   // 25nm says something true that neither figure says alone.
   const sql = names.length
     ? `WITH j AS (
-         SELECT t.icao, t.kind, t.site, t.country, t.ts,
+         SELECT t.icao, t.kind, t.site, t.country, t.ts, t.alt_ft,
                 2 * 3440.065 * asin(sqrt(
                   power(sin(radians(t.lat - s.slat) / 2), 2) +
                   cos(radians(s.slat)) * cos(radians(t.lat)) *
@@ -248,6 +278,18 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 100 AND kind = 'uav')::int AS uav100,
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 100 AND kind = 'military')::int AS mil100,
               count(DISTINCT icao) FILTER (WHERE dist_nm <= 25)::int AS near_contacts,
+              -- TERMINAL AREA: within 10nm AND below 10,000ft. An aircraft cruising at 35,000ft
+              -- over a base is transiting, not using it — but until now both counted identically,
+              -- so a transcontinental flight inflated a dozen bases on its way past. Altitude is
+              -- the semantic that separates "operating here" from "flew over here". Labelled as
+              -- an INFERENCE: low and close is consistent with arriving/departing, not proof of
+              -- a landing (we observe positions, never movements).
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 10 AND alt_ft IS NOT NULL AND alt_ft < 10000)::int AS terminal_contacts,
+              count(*) FILTER (WHERE dist_nm <= 10 AND alt_ft IS NOT NULL AND alt_ft < 10000)::int AS terminal_points,
+              -- HIGH OVERFLIGHT: inside 25nm but at cruise. These are the ones that were quietly
+              -- inflating every "busy base" figure.
+              count(DISTINCT icao) FILTER (WHERE dist_nm <= 25 AND alt_ft IS NOT NULL AND alt_ft >= 25000)::int AS overflight_contacts,
+              count(*) FILTER (WHERE alt_ft IS NOT NULL)::int AS points_with_alt,
               max(ts) AS last_seen,
               round(EXTRACT(EPOCH FROM (max(ts) - min(ts))) / 3600.0)::int AS span_hours
          FROM j
@@ -331,7 +373,10 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
       `SELECT site, (array_agg(country ORDER BY ts DESC))[1] AS country,
               COUNT(DISTINCT icao) AS contacts,
               COUNT(DISTINCT icao) FILTER (WHERE kind = 'uav') AS uav,
-              COUNT(DISTINCT icao) FILTER (WHERE kind = 'military') AS military
+              COUNT(DISTINCT icao) FILTER (WHERE kind = 'military') AS military,
+              -- low + close: consistent with using the field rather than passing overhead
+              COUNT(DISTINCT icao) FILTER (WHERE alt_ft IS NOT NULL AND alt_ft < 10000
+                                             AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10) AS terminal
          FROM drone_tracks
         WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
         GROUP BY site ORDER BY contacts DESC LIMIT 8`, [d]),
@@ -356,6 +401,7 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
   const now = top.rows.map((r) => ({
     site: r.site, country: r.country,
     contacts: Number(r.contacts), uav: Number(r.uav), military: Number(r.military),
+    terminal: r.terminal == null ? null : Number(r.terminal),
   }));
 
   // The sweep polls a 250nm radius, so a site's headline count covers a whole REGION, not the
@@ -406,4 +452,5 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
   };
 }
 
-module.exports = { init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS };
+module.exports = {
+  coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS };
