@@ -207,6 +207,12 @@ You must include, in your own words, that these counts come only from aircraft b
 ADS-B, so aircraft with transponders switched off are not represented, and that a difference in
 counts may reflect observation coverage as easily as activity.
 
+LEAD WITH GEOGRAPHY AND WITH THE FIELD-LEVEL RANKING. A digest that opens with a list of eight
+airbase names tells the reader nothing about where in the world anything happened — start from the
+country rollup, then name specific sites. And when you say a base was busy, use the AT THE FIELD
+ranking, never the 250nm one. Where the two orderings DISAGREE, that disagreement is the most
+interesting thing in the data and is worth stating plainly.
+
 CRITICAL — OVERFLIGHT IS NOT USE. A contact counted "at" a site may simply have flown over it.
 One aircraft crossing a continent passes within range of many sites and is counted at each. When a
 site has a terminal figure (aircraft observed within 10nm BELOW 10,000ft — consistent with
@@ -231,27 +237,39 @@ appearance.
 Never infer intent, mission, escalation, or geopolitical meaning. Report what was observed.`;
 
 async function writeDigest(args, opts = {}) {
-  const { windowDays, top, topNear, risers, newSites, totals, sweepRadiusNm = 250,
-                             nearRadiusNm = 25, coversPrevWindow = true, archiveAgeHours = null } = args;
+  const { windowDays, top, topNear, topField, countries, risers, newSites, totals,
+                             sweepRadiusNm = 250, nearRadiusNm = 25, fieldRadiusNm = 10,
+                             fieldCeilingFt = 4000, coversPrevWindow = true, archiveAgeHours = null } = args;
   const user =
 `Archive window: last ${windowDays} days.
 Each figure below counts DISTINCT aircraft seen within ${sweepRadiusNm}nm of the named site — a region, not the base itself.
 Totals: ${totals.contacts} aircraft, ${totals.uav} UAV, ${totals.military} military, across ${totals.sites} airspaces.
 
-Busiest AIRFIELDS — ranked by aircraft within ${nearRadiusNm}nm of the site itself:
+BY COUNTRY — where the activity was, geographically:
+${(countries || []).map((c) =>
+  `- ${c.country}: ${c.contacts} aircraft across ${c.sites} airspaces (${c.uav} UAV); ${c.terminal} seen at a field`).join("\n") || "- none"}
+
+Busiest AT THE FIELD — ranked by aircraft within ${fieldRadiusNm}nm AND below ${fieldCeilingFt}ft
+(consistent with using the field rather than passing over it). THIS is the ranking that answers
+"which bases were actually busy":
+${(topField || []).map((s) =>
+  `- ${s.site} (${s.country || "—"}): ${s.terminal} at the field; ${s.contacts} in the surrounding ${sweepRadiusNm}nm`).join("\n") || "- none recorded at field level in this window"}
+
+Busiest LOCAL AIRSPACE — ranked by aircraft within ${nearRadiusNm}nm of the site:
 ${(topNear && topNear.length ? topNear : top).map((s) =>
   `- ${s.site} (${s.country || "—"}): ${s.nearContacts != null ? s.nearContacts : "?"} within ${nearRadiusNm}nm; ${s.contacts} within ${sweepRadiusNm}nm`).join("\n") || "- none"}
 
 Busiest REGIONS — ranked by aircraft within ${sweepRadiusNm}nm (a region, not a base):
 ${top.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts} aircraft, ${s.uav} UAV, ${s.military} military` +
-    (s.nearContacts != null ? `; only ${s.nearContacts} within ${nearRadiusNm}nm` : "")).join("\n") || "- none"}
+    (s.nearContacts != null ? `; only ${s.nearContacts} within ${nearRadiusNm}nm` : "") +
+    (s.terminal != null ? `; ${s.terminal} at the field` : "")).join("\n") || "- none"}
 
 ${coversPrevWindow
   ? `Largest increases vs the previous window:\n${risers.map((s) => `- ${s.site}: ${s.prev} -> ${s.now}`).join("\n") || "- none"}\n\nRegions producing their first recorded aircraft:\n${newSites.map((s) => `- ${s.site} (${s.country || "—"}): ${s.contacts}`).join("\n") || "- none"}`
   : `NO COMPARISON AVAILABLE: the archive only reaches back ${archiveAgeHours != null ? archiveAgeHours + " hours" : "less than the comparison window"}, which is shorter than the previous ${windowDays}-day window. Do not describe anything as new, rising, or a first appearance. State that week-on-week comparison is not yet possible.`}
 
 Write the briefing.`;
-  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, topNear, risers, newSites, totals, coversPrevWindow }) , cacheOnly: !!opts.cacheOnly });
+  return ask({ system: DIGEST_SYSTEM, user, maxTokens: 420, cacheKey: "dig:" + hash({ windowDays, top, topNear, topField, countries, risers, newSites, totals, coversPrevWindow }) , cacheOnly: !!opts.cacheOnly });
 }
 
 // ---------------------------------------------------------------------------

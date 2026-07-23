@@ -394,18 +394,38 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
   const prevWindowStart = new Date(Date.now() - days * 2 * 86400000);
   const coversPrevWindow = !!earliest && earliest <= prevWindowStart;
   const archiveAgeHours = earliest ? Math.round((Date.now() - earliest) / 3600000) : 0;
-  const [top, prev, totals] = await Promise.all([
+  const [top, topField_, byCountry, prev, totals] = await Promise.all([
     pool.query(
       `SELECT site, (array_agg(country ORDER BY ts DESC))[1] AS country,
               COUNT(DISTINCT icao) AS contacts,
               COUNT(DISTINCT icao) FILTER (WHERE kind = 'uav') AS uav,
               COUNT(DISTINCT icao) FILTER (WHERE kind = 'military') AS military,
               -- low + close: consistent with using the field rather than passing overhead
-              COUNT(DISTINCT icao) FILTER (WHERE alt_ft IS NOT NULL AND alt_ft < 10000
+              COUNT(DISTINCT icao) FILTER (WHERE alt_ft IS NOT NULL AND alt_ft < 4000
                                              AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10) AS terminal
          FROM drone_tracks
         WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
         GROUP BY site ORDER BY contacts DESC LIMIT 8`, [d]),
+    pool.query(
+      `SELECT site, (array_agg(country ORDER BY ts DESC))[1] AS country,
+              COUNT(DISTINCT icao) FILTER (WHERE alt_ft IS NOT NULL AND alt_ft < 4000
+                                             AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10) AS terminal,
+              COUNT(DISTINCT icao) AS contacts
+         FROM drone_tracks
+        WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
+        GROUP BY site HAVING COUNT(DISTINCT icao) FILTER (WHERE alt_ft IS NOT NULL AND alt_ft < 4000
+                                             AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10) > 0
+        ORDER BY terminal DESC LIMIT 8`, [d]),
+    pool.query(
+      `SELECT country,
+              COUNT(DISTINCT icao) AS contacts,
+              COUNT(DISTINCT icao) FILTER (WHERE kind = 'uav') AS uav,
+              COUNT(DISTINCT site) AS sites,
+              COUNT(DISTINCT icao) FILTER (WHERE alt_ft IS NOT NULL AND alt_ft < 4000
+                                             AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10) AS terminal
+         FROM drone_tracks
+        WHERE ts > now() - ($1 || ' days')::interval AND country IS NOT NULL
+        GROUP BY country ORDER BY contacts DESC LIMIT 10`, [d]),
     pool.query(
       `SELECT site, COUNT(DISTINCT icao) AS contacts
          FROM drone_tracks
@@ -463,11 +483,32 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
   const topNear = now.filter((r) => r.nearContacts != null)
     .slice().sort((a, b) => b.nearContacts - a.nearContacts).slice(0, 5);
 
+  // Ranked by activity AT THE FIELD (within 10nm, below 4,000ft) rather than by the size of the
+  // surrounding airspace. This is the ordering that answers "which bases were actually busy" —
+  // ordering by the 250nm count answers "which bases sit in busy airspace", which is the original
+  // 344 error wearing a leaderboard.
+  const topField = topField_.rows.map((r) => ({
+    site: r.site, country: r.country,
+    terminal: Number(r.terminal), contacts: Number(r.contacts),
+  }));
+
+  // Country rollup: a digest that lists eight airbases with no geography reads as a list of
+  // names. Grouping by country is the first thing a reader actually wants.
+  const countries = byCountry.rows.map((r) => ({
+    country: r.country,
+    contacts: Number(r.contacts), uav: Number(r.uav),
+    sites: Number(r.sites), terminal: Number(r.terminal || 0),
+  }));
+
   return {
     windowDays: days,
     topNear,
+    topField,
+    countries,
     sweepRadiusNm: 250,
     nearRadiusNm: NEAR_NM,
+    fieldRadiusNm: 10,
+    fieldCeilingFt: 4000,
     archiveAgeHours,
     coversPrevWindow,
     top: now,
