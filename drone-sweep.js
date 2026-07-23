@@ -759,7 +759,13 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
       hotDeferred: tiers.hotDeferred,      // active but slipped to the next pass
       warmSites: tiers.warm,
       coldSites: tiers.cold,
+      // NAMING TRAP: deepCells is a TIER POPULATION — grid cells currently in the slow rotation —
+      // not the size of the grid. A cell that produces contacts is PROMOTED to a faster tier and
+      // leaves this count, so namedSites + deepCells does NOT equal sites, and shouldn't.
+      // gridCells is the actual grid size; the gap between them is how many cells found activity.
       deepCells: tiers.deep,
+      gridCells: DEEP_SITES.length,
+      gridPromoted: Math.max(0, DEEP_SITES.length - tiers.deep),
       cycles, lastSweepAt, errors: sweepErrors, tracked24h: seen.size,
       intervalSec: SITE_INTERVAL_MS / 1000,
     },
