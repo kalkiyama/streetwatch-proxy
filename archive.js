@@ -638,9 +638,14 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
   const byIcao = new Map();
   for (const r of rows) {
     const cur = byIcao.get(r.icao) || {
-      icao: r.icao, callsign: null, typeCode: null, descr: null, kind: null, stops: [],
+      icao: r.icao, callsign: null, typeCode: null, descr: null, kind: null,
+      callsignSet: [], stops: [],
     };
     cur.callsign = cur.callsign || r.callsign || null;
+    // Callsigns are set per MISSION, not per airframe: the same aircraft routinely arrives as one
+    // callsign and departs as another. Keeping only the first hid that entirely. The change is
+    // often the most informative part of an itinerary, so it is recorded per stop.
+    if (r.callsign && !cur.callsignSet.includes(r.callsign)) cur.callsignSet.push(r.callsign);
     cur.typeCode = cur.typeCode || r.type_code || null;
     cur.descr = cur.descr || r.descr || null;
     cur.kind = cur.kind || r.kind || null;
@@ -649,6 +654,7 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
     const mins = Math.round((last - first) / 60000);
     cur.stops.push({
       site: r.site, country: r.country,
+      callsign: r.callsign || null,
       firstSeen: r.first_seen, lastSeen: r.last_seen,
       // "At least" because we only know the span we OBSERVED it inside the terminal area.
       observedMinutes: mins,
@@ -685,6 +691,12 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
       // is a much weaker claim than one where 5 are sustained, and the difference must be visible.
       sustainedStops: a.stops.filter((s) => s.evidence === "sustained").length,
       singleSightingStops: a.stops.filter((s) => s.evidence === "single sighting").length,
+      // The AIRFRAME is constant here — grouping is by ICAO address, which is tied to the
+      // registration — while the CALLSIGN can change between legs. More than one callsign across
+      // an itinerary is normal operational practice, not evidence of anything covert, and it is
+      // reported as an observation with no motive attached.
+      callsigns: a.callsignSet,
+      callsignChanges: Math.max(0, a.callsignSet.length - 1),
     };
   }).sort((x, y) =>
     // Rank by EVIDENCE, not by count. Sorting on stopCount alone put a 7-stop itinerary with zero
@@ -705,6 +717,8 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
       "Dwell is the OBSERVED span inside the terminal area, so it is a lower bound.",
       "The sweep rotates; a missed stop is not evidence there was none.",
       "Airfields closer than about 20nm can both register one approach — an itinerary alternating between two neighbouring fields (Eglin/Hurlburt/Duke, for example) is more likely local pattern work than separate logistics stops.",
+    "Itineraries are grouped by ICAO 24-bit address (the airframe), not by callsign. An aircraft that arrives as one callsign and departs as another is correctly kept as ONE itinerary; the callsigns field lists every one observed.",
+    "If the ICAO ADDRESS itself changes — a PIA privacy address, a maintenance reprogramming, or spoofing — the legs CANNOT be linked and will appear as separate aircraft. This watch has no way to join them, and does not guess.",
     "Each stop carries an `evidence` value: sustained (5+ observations over 20+ minutes), repeated, or single sighting. A single sighting is one sweep catching the aircraft low and close once — consistent with a stop, and equally consistent with an approach it flew away from.",
     ],
     count: aircraft.length,
