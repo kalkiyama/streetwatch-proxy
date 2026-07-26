@@ -368,6 +368,16 @@ async function handler(req, res) {
     return send(res, 200, await ais.getUsvFleet(lat, lon), origin);
   }
 
+  if (p === "/api/drones/multistop") {
+    const days = Number(u.searchParams.get("days") || 7);
+    const minStops = Number(u.searchParams.get("stops") || 2);
+    try {
+      return send(res, 200, await archive.multiStop(days, minStops), origin);
+    } catch (e) {
+      return send(res, 500, { error: "multistop_failed", detail: String(e && e.message || e) }, origin);
+    }
+  }
+
   if (p === "/api/airspace/advisories") {
     return send(res, 200, advisories.list(), origin);
   }
@@ -449,7 +459,7 @@ async function handler(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/webcams", "/health", "/metrics"] }, origin);
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/webcams", "/health", "/metrics"] }, origin);
 }
 
 function createServer() { return http.createServer(handler); }

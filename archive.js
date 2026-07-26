@@ -554,6 +554,133 @@ async function ageHours() {
   return Math.round((Date.now() - earliest) / 3600000);
 }
 
+// MULTI-STOP TRACKING — the same aircraft observed low and close at several airfields in sequence.
+//
+// A logistics run (load, fly, unload, fly again) leaves a distinctive trace: terminal-area
+// observations at field A, then field B, then C, with a gap of hours between. Nothing else in this
+// product looks across sites for a SINGLE aircraft; every other query aggregates per site.
+//
+// WHAT THIS CAN AND CANNOT SAY — stated here because the output is easy to over-read:
+//   - We observe POSITIONS, never movements. "Low and close" (<=10nm, <4,000ft) is consistent with
+//     using a field; it is not an observed landing, and a low overflight looks identical.
+//   - A gap between two sites means WE DID NOT SEE IT, not that it flew directly. It may have
+//     stopped somewhere unwatched, or been out of receiver coverage.
+//   - Dwell is bounded by observation: "seen 09:12-11:40" means at least that long, and only that
+//     it was within the terminal area during it.
+//   - The sweep rotates, so an aircraft can be missed at a site entirely. Absence of a stop is not
+//     evidence it did not stop.
+//   - Nearby airfields can both see the same aircraft. Sites closer together than ~20nm may both
+//     register a single approach; adjacent-field pairs are flagged rather than silently treated as
+//     two stops.
+//
+// Visits are segmented by SITE CHANGE or a gap longer than VISIT_GAP_H, so an A -> B -> A pattern
+// is preserved as three visits rather than collapsed into two sites.
+const VISIT_GAP_H = Number(process.env.VISIT_GAP_HOURS || 3);
+
+async function multiStop(days = 7, minStops = 2, limit = 40) {
+  if (!ready) return { enabled: false, visits: [], aircraft: [] };
+  const d = Math.max(1, Math.min(90, Number(days) || 7));
+  const stops = Math.max(2, Math.min(10, Number(minStops) || 2));
+  const { rows } = await pool.query(
+    `WITH terminal AS (
+       SELECT icao, site, country, ts, callsign, type_code, descr, kind
+         FROM drone_tracks
+        WHERE ts > now() - ($1 || ' days')::interval
+          AND site IS NOT NULL
+          AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10
+          AND alt_ft IS NOT NULL AND alt_ft < 4000
+     ),
+     seq AS (
+       SELECT *,
+              LAG(site) OVER (PARTITION BY icao ORDER BY ts) AS prev_site,
+              LAG(ts)   OVER (PARTITION BY icao ORDER BY ts) AS prev_ts
+         FROM terminal
+     ),
+     marked AS (
+       SELECT *, CASE WHEN prev_site IS DISTINCT FROM site
+                        OR prev_ts IS NULL
+                        OR ts - prev_ts > ($2 || ' hours')::interval
+                      THEN 1 ELSE 0 END AS is_new
+         FROM seq
+     ),
+     grouped AS (
+       SELECT *, SUM(is_new) OVER (PARTITION BY icao ORDER BY ts
+                                   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS visit_no
+         FROM marked
+     ),
+     visits AS (
+       SELECT icao, visit_no, site,
+              (array_agg(country ORDER BY ts DESC))[1]   AS country,
+              (array_agg(callsign ORDER BY ts DESC))[1]  AS callsign,
+              (array_agg(type_code ORDER BY ts DESC))[1] AS type_code,
+              (array_agg(descr ORDER BY ts DESC))[1]     AS descr,
+              (array_agg(kind ORDER BY ts DESC))[1]      AS kind,
+              min(ts) AS first_seen, max(ts) AS last_seen, count(*)::int AS points
+         FROM grouped GROUP BY icao, visit_no, site
+     ),
+     qualifying AS (
+       SELECT icao FROM visits
+        GROUP BY icao
+       HAVING count(*) >= $3 AND count(DISTINCT site) >= 2
+     )
+     SELECT v.* FROM visits v JOIN qualifying q ON q.icao = v.icao
+      ORDER BY v.icao, v.first_seen`,
+    [d, VISIT_GAP_H, stops]
+  );
+
+  // Fold the flat visit rows into one itinerary per aircraft.
+  const byIcao = new Map();
+  for (const r of rows) {
+    const cur = byIcao.get(r.icao) || {
+      icao: r.icao, callsign: null, typeCode: null, descr: null, kind: null, stops: [],
+    };
+    cur.callsign = cur.callsign || r.callsign || null;
+    cur.typeCode = cur.typeCode || r.type_code || null;
+    cur.descr = cur.descr || r.descr || null;
+    cur.kind = cur.kind || r.kind || null;
+    const first = new Date(r.first_seen).getTime();
+    const last = new Date(r.last_seen).getTime();
+    cur.stops.push({
+      site: r.site, country: r.country,
+      firstSeen: r.first_seen, lastSeen: r.last_seen,
+      // "At least" because we only know the span we OBSERVED it inside the terminal area.
+      observedMinutes: Math.round((last - first) / 60000),
+      points: r.points,
+    });
+    byIcao.set(r.icao, cur);
+  }
+
+  const aircraft = [...byIcao.values()].map((a) => {
+    const t0 = new Date(a.stops[0].firstSeen).getTime();
+    const t1 = new Date(a.stops[a.stops.length - 1].lastSeen).getTime();
+    return {
+      ...a,
+      stopCount: a.stops.length,
+      distinctSites: new Set(a.stops.map((s) => s.site)).size,
+      spanHours: Math.round((t1 - t0) / 36e5 * 10) / 10,
+      route: a.stops.map((s) => s.site).join(" -> "),
+    };
+  }).sort((x, y) => y.stopCount - x.stopCount || x.spanHours - y.spanHours)
+    .slice(0, Math.max(1, Math.min(200, Number(limit) || 40)));
+
+  return {
+    enabled: true,
+    windowDays: d,
+    visitGapHours: VISIT_GAP_H,
+    criteria: "within 10nm and below 4,000ft — consistent with using the field, not an observed landing",
+    caveats: [
+      "Positions only. A low overflight is indistinguishable from a stop.",
+      "A gap between stops means it was not seen in between, not that it flew directly.",
+      "Dwell is the OBSERVED span inside the terminal area, so it is a lower bound.",
+      "The sweep rotates; a missed stop is not evidence there was none.",
+      "Airfields closer than about 20nm can both register one approach.",
+    ],
+    count: aircraft.length,
+    aircraft,
+  };
+}
+
 module.exports = {
   ageHours,
+  multiStop,
   coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS };
