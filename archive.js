@@ -577,11 +577,17 @@ async function ageHours() {
 // is preserved as three visits rather than collapsed into two sites.
 const VISIT_GAP_H = Number(process.env.VISIT_GAP_HOURS || 3);
 
-async function multiStop(days = 7, minStops = 2, limit = 40) {
+// distNm/altFt are CALLER-CHOSEN because the trade-off is theirs to make: 5nm/2,000ft yields
+// far higher-confidence stops and far fewer of them, 10nm/4,000ft catches more and admits more
+// ambiguity. Neither is "correct" — they answer different questions, so the criteria travel back
+// in the response rather than being an invisible assumption.
+async function multiStop(days = 7, minStops = 2, limit = 40, distNm = 10, altFt = 4000) {
   if (!ready) return { enabled: false, visits: [], aircraft: [] };
   const d = Math.max(1, Math.min(90, Number(days) || 7));
   const stops = Math.max(2, Math.min(10, Number(minStops) || 2));
   const lim = Math.max(1, Math.min(200, Number(limit) || 40));
+  const rNm = Math.max(1, Math.min(50, Number(distNm) || 10));
+  const ceilFt = Math.max(500, Math.min(20000, Number(altFt) || 4000));
   // Fail fast and visibly rather than hanging until the platform kills the connection.
   await pool.query("SET LOCAL statement_timeout = 15000").catch(() => {});
   const { rows } = await pool.query(
@@ -590,8 +596,8 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
          FROM drone_tracks
         WHERE ts > now() - ($1 || ' days')::interval
           AND site IS NOT NULL
-          AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10
-          AND alt_ft IS NOT NULL AND alt_ft < 4000
+          AND site_dist_nm IS NOT NULL AND site_dist_nm <= $5
+          AND alt_ft IS NOT NULL AND alt_ft < $6
      ),
      seq AS (
        SELECT *,
@@ -631,7 +637,7 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
      )
      SELECT v.*, q.visit_count FROM visits v JOIN qualifying q ON q.icao = v.icao
       ORDER BY q.visit_count DESC, v.icao, v.first_seen`,
-    [d, VISIT_GAP_H, stops, lim]
+    [d, VISIT_GAP_H, stops, lim, rNm, ceilFt]
   );
 
   // Fold the flat visit rows into one itinerary per aircraft.
@@ -710,7 +716,9 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
     enabled: true,
     windowDays: d,
     visitGapHours: VISIT_GAP_H,
-    criteria: "within 10nm and below 4,000ft — consistent with using the field, not an observed landing",
+    criteria: `within ${rNm}nm and below ${ceilFt.toLocaleString()}ft — consistent with using the field, not an observed landing`,
+    distNm: rNm,
+    altFt: ceilFt,
     caveats: [
       "Positions only. A low overflight is indistinguishable from a stop.",
       "A gap between stops means it was not seen in between, not that it flew directly.",

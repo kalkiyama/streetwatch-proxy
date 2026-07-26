@@ -374,7 +374,9 @@ async function handler(req, res) {
     const days = Number(u.searchParams.get("days") || 7);
     const minStops = Number(u.searchParams.get("stops") || 2);
     try {
-      return send(res, 200, await archive.multiStop(days, minStops), origin);
+      const distNm = Number(u.searchParams.get("nm") || 10);
+      const altFt = Number(u.searchParams.get("alt") || 4000);
+      return send(res, 200, await archive.multiStop(days, minStops, 40, distNm, altFt), origin);
     } catch (e) {
       return send(res, 500, { error: "multistop_failed", detail: String(e && e.message || e) }, origin);
     }
