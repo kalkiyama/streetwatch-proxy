@@ -408,7 +408,12 @@ async function handler(req, res) {
     const sites = Object.fromEntries(droneSweep.SITES.map((x) => [x[0], { lat: x[2], lon: x[3] }]));
     const out = rows
       .filter((r) => sites[r.site])
-      .map((r) => ({ ...r, lat: sites[r.site].lat, lon: sites[r.site].lon }));
+      // Attach any WATCHED site close enough that a single approach could belong to either. Eglin
+      // and Hurlburt are 9.3nm apart against a 10nm terminal radius, so their terminal areas
+      // overlap outright — an aircraft between them is inside both and gets attributed to whichever
+      // is marginally nearer. The reader has to be told that, not left to assume precision.
+      .map((r) => ({ ...r, lat: sites[r.site].lat, lon: sites[r.site].lon,
+                     nearbySites: droneSweep.neighboursOf ? droneSweep.neighboursOf(r.site) : [] }));
     const max = out.reduce((m, r) => Math.max(m, r.contacts), 0) || 1;
     return send(res, 200, {
       archiveAgeHours: await archive.ageHours(),
