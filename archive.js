@@ -66,8 +66,14 @@ async function init() {
         descr       TEXT,
         site        TEXT,
         site_dist_nm DOUBLE PRECISION,
-        country     TEXT
+        country     TEXT,
+        pos_method  TEXT,      -- ADS-B | ADS-R | TIS-B | MLAT | ADS-C | Mode S
+        pos_computed BOOLEAN   -- true when the position was NOT self-reported
       )`);
+    // The table already exists in production, so the CREATE above is a no-op there — new columns
+    // have to be added explicitly or the INSERT below fails on every write.
+    await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS pos_method TEXT`);
+    await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS pos_computed BOOLEAN`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_icao_ts ON drone_tracks (icao, ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_ts ON drone_tracks (ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_site_ts ON drone_tracks (site, ts DESC)`);
@@ -103,6 +109,8 @@ function record(c) {
     c.kind, c.confidence || null, c.callsign || null, c.typeCode || null,
     c.desc || null, c.site || null, c.country || null,
     Number.isFinite(c.siteDistNm) ? c.siteDistNm : null,
+    c.posMethod || null,
+    typeof c.posComputed === "boolean" ? c.posComputed : null,
   ]);
   if (buffer.length >= FLUSH_MAX) flush();
 }
@@ -112,7 +120,7 @@ async function flush() {
   if (!ready || buffer.length === 0) return;
   const batch = buffer;
   buffer = [];
-  const COLS = 15;   // keep in step with the INSERT column list below
+  const COLS = 17;   // keep in step with the INSERT column list below
   const values = batch.map((_, i) => {
     const b = i * COLS;
     const ph = [];
@@ -123,7 +131,7 @@ async function flush() {
   try {
     await pool.query(
       `INSERT INTO drone_tracks
-        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country, site_dist_nm)
+        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country, site_dist_nm, pos_method, pos_computed)
        VALUES ${values}`,
       batch.flat()
     );
