@@ -717,6 +717,7 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
       "Dwell is the OBSERVED span inside the terminal area, so it is a lower bound.",
       "The sweep rotates; a missed stop is not evidence there was none.",
       "Airfields closer than about 20nm can both register one approach — an itinerary alternating between two neighbouring fields (Eglin/Hurlburt/Duke, for example) is more likely local pattern work than separate logistics stops.",
+    "A stop with no callsign means none was RECORDED for those observations. That is not the same as the aircraft withholding one: not every ADS-B message carries the flight field, so a short visit can easily be captured without it. Absence of a callsign here is not evidence of a blank callsign being broadcast.",
     "Itineraries are grouped by ICAO 24-bit address (the airframe), not by callsign. An aircraft that arrives as one callsign and departs as another is correctly kept as ONE itinerary; the callsigns field lists every one observed.",
     "If the ICAO ADDRESS itself changes — a PIA privacy address, a maintenance reprogramming, or spoofing — the legs CANNOT be linked and will appear as separate aircraft. This watch has no way to join them, and does not guess.",
     "Each stop carries an `evidence` value: sustained (5+ observations over 20+ minutes), repeated, or single sighting. A single sighting is one sweep catching the aircraft low and close once — consistent with a stop, and equally consistent with an approach it flew away from.",
