@@ -369,6 +369,8 @@ async function handler(req, res) {
   }
 
   if (p === "/api/drones/multistop") {
+    // Each route parses its own URL — `u` is block-scoped per handler branch, not shared.
+    const u = new URL(req.url, "http://localhost");
     const days = Number(u.searchParams.get("days") || 7);
     const minStops = Number(u.searchParams.get("stops") || 2);
     try {
