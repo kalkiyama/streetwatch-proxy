@@ -98,6 +98,48 @@ function cleanCallsign(raw) {
   return cleaned || null;
 }
 
+// POSITION PROVENANCE — how each position was actually derived.
+//
+// These methods are NOT equivalent, and showing them identically is the same overclaim this
+// project keeps finding: a computed estimate rendered exactly like a broadcast GPS fix invites a
+// reader to trust both the same amount. Accuracy differs by roughly an order of magnitude between
+// ADS-B and MLAT, and an ADS-C position can be minutes old.
+//
+// Values come from the readsb `type` field, shared by all three upstreams. Unknown values are
+// passed through with an honest "unrecognised" basis rather than silently treated as ADS-B.
+const PROVENANCE = {
+  adsb_icao:      { method: "ADS-B",  basis: "self-reported", detail: "aircraft broadcast its own GPS position" },
+  adsb_icao_nt:   { method: "ADS-B",  basis: "self-reported", detail: "non-transponder ADS-B broadcast" },
+  adsb_other:     { method: "ADS-B",  basis: "self-reported", detail: "ADS-B broadcast, non-ICAO address" },
+  adsr_icao:      { method: "ADS-R",  basis: "relayed",       detail: "ADS-B rebroadcast by a ground station" },
+  adsr_other:     { method: "ADS-R",  basis: "relayed",       detail: "rebroadcast, non-ICAO address" },
+  tisb_icao:      { method: "TIS-B",  basis: "radar-derived", detail: "ground station rebroadcasting a radar track" },
+  tisb_other:     { method: "TIS-B",  basis: "radar-derived", detail: "radar-derived, non-ICAO address" },
+  tisb_trackfile: { method: "TIS-B",  basis: "radar-derived", detail: "radar track file, no discrete address" },
+  mlat:           { method: "MLAT",   basis: "computed",      detail: "no position broadcast — triangulated from signal arrival times across receivers; an estimate, not a fix" },
+  adsc:           { method: "ADS-C",  basis: "satellite",     detail: "contract report via satellite — may be several minutes old" },
+  mode_s:         { method: "Mode S", basis: "no position",   detail: "identity and altitude only" },
+  other:          { method: "other",  basis: "unrecognised",  detail: "source not specified by the feed" },
+};
+
+function provenance(rawType) {
+  const t = String(rawType || "").trim();
+  if (!t) return { posType: null, posMethod: null, posBasis: null, posDetail: null, posComputed: null };
+  const hit = PROVENANCE[t];
+  if (!hit) {
+    // A type we do not recognise must NOT be assumed to be a broadcast fix.
+    return { posType: t, posMethod: t, posBasis: "unrecognised", posDetail: "unknown position source", posComputed: null };
+  }
+  return {
+    posType: t,
+    posMethod: hit.method,
+    posBasis: hit.basis,
+    posDetail: hit.detail,
+    // Anything not self-reported is an estimate or a relay, and the map styles it differently.
+    posComputed: hit.basis !== "self-reported",
+  };
+}
+
 function normalize(upstream) {
   const list = contactList(upstream) || [];
   const aircraft = list
@@ -129,6 +171,7 @@ function normalize(upstream) {
         military: Number.isFinite(a.dbFlags) ? Boolean(a.dbFlags & 1) : null, // dbFlags bit 0 = military
         emergency: a.emergency && a.emergency !== "none" ? String(a.emergency) : null,
         seenPosSec: typeof a.seen_pos === "number" ? a.seen_pos : null,
+        ...provenance(a.type),
       };
     });
   // `source` is overwritten by the caller with whichever upstream actually answered.
@@ -276,4 +319,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`ADS-B proxy on :${PORT} -> ${UPSTREAM}`));
 }
 
-module.exports = { stats, upstreamRate, normalize, contactList, cleanCallsign, fetchAircraft, createServer, handler };
+module.exports = { stats, upstreamRate, normalize, contactList, cleanCallsign, provenance, fetchAircraft, createServer, handler };
