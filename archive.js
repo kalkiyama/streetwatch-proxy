@@ -686,7 +686,13 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
       sustainedStops: a.stops.filter((s) => s.evidence === "sustained").length,
       singleSightingStops: a.stops.filter((s) => s.evidence === "single sighting").length,
     };
-  }).sort((x, y) => y.stopCount - x.stopCount || x.spanHours - y.spanHours);
+  }).sort((x, y) =>
+    // Rank by EVIDENCE, not by count. Sorting on stopCount alone put a 7-stop itinerary with zero
+    // sustained stops above a 6-stop one with five — the list led with its weakest result while
+    // the strongest sat below it. Sustained stops first, then total stops, then the tighter span.
+    y.sustainedStops - x.sustainedStops
+    || y.stopCount - x.stopCount
+    || x.spanHours - y.spanHours);
 
   return {
     enabled: true,
