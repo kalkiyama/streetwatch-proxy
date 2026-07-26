@@ -19,7 +19,45 @@ const http = require("http");
 
 const PORT = process.env.PORT || 8787;
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || "*";
-const UPSTREAM = process.env.ADSB_UPSTREAM || "https://api.airplanes.live/v2/point";
+// UPSTREAM RESILIENCE. One ADS-B source was the single point of failure for the entire aviation
+// half of the product: if it rate-limits or goes down, the live map, the 1,108-airspace sweep and
+// the archive all stop at once. These are community feeds that can and do change.
+//
+// Each entry carries its own URL TEMPLATE because the providers do not share a URL shape — only
+// the response shape (all are readsb-derived, so normalize() handles them). A source whose payload
+// normalize() cannot read is treated as a failure and we fall through, rather than serving nothing.
+//
+// Override with ADSB_UPSTREAMS as a comma-separated list of name|template pairs. The legacy
+// ADSB_UPSTREAM (singular) still works and is used as the first entry if set.
+const DEFAULT_UPSTREAMS = [
+  { name: "airplanes.live", tpl: "https://api.airplanes.live/v2/point/{lat}/{lon}/{radius}" },
+  { name: "adsb.lol",       tpl: "https://api.adsb.lol/v2/point/{lat}/{lon}/{radius}" },
+  { name: "adsb.fi",        tpl: "https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{radius}" },
+];
+
+function parseUpstreams() {
+  const raw = process.env.ADSB_UPSTREAMS;
+  if (raw) {
+    const list = raw.split(",").map((part) => {
+      const [name, tpl] = part.split("|").map((x) => x && x.trim());
+      return name && tpl ? { name, tpl } : null;
+    }).filter(Boolean);
+    if (list.length) return list;
+  }
+  const legacy = process.env.ADSB_UPSTREAM;
+  if (legacy) {
+    return [{ name: "configured", tpl: `${legacy}/{lat}/{lon}/{radius}` }, ...DEFAULT_UPSTREAMS];
+  }
+  return DEFAULT_UPSTREAMS;
+}
+
+const UPSTREAMS = parseUpstreams();
+const UPSTREAM = UPSTREAMS[0].tpl;                       // kept for the startup log line
+// 5s, not 8s. The upstream normally answers in ~570ms, so anything past a few seconds is already
+// pathological and the caller is better served by failing over than by waiting. This same path
+// serves both the background sweep and user-facing radar requests, so the budget has to suit the
+// impatient one.
+const UPSTREAM_TIMEOUT_MS = Number(process.env.ADSB_TIMEOUT_MS || 5000);
 // Fresh window raised 4s -> 20s. The binding constraint is airplanes.live's ~1 req/s
 // guidance: at 4s each distinct viewed airport cost 0.25 req/s (only ~4 concurrent
 // airports before exceeding it); at 20s it is 0.05 req/s (~20 airports). Aircraft move
@@ -68,13 +106,18 @@ function normalize(upstream) {
         seenPosSec: typeof a.seen_pos === "number" ? a.seen_pos : null,
       };
     });
-  return { source: "airplanes.live", updated: new Date().toISOString(), count: aircraft.length, aircraft };
+  // `source` is overwritten by the caller with whichever upstream actually answered.
+  return { source: null, updated: new Date().toISOString(), count: aircraft.length, aircraft };
 }
 
 // metrics, exported for /metrics
 const stats = {
   requests: 0, cacheHits: 0, staleServed: 0, coalesced: 0,
   upstreamCalls: 0, upstreamErrors: 0, upstreamMsTotal: 0,
+  // Which source actually served each response. A silent failover changes COVERAGE — a different
+  // receiver network sees different aircraft — so "nothing visible here" means something different
+  // depending on who answered. That has to be visible, not hidden.
+  bySource: {}, activeSource: null, failovers: 0,
   upstreamWindow: [],           // timestamps of the last minute of upstream calls
   recentMs: [],                 // durations of the last 20 calls — a cumulative average
                                 // hides recovery after cold-start (4s TLS handshakes kept
@@ -89,21 +132,44 @@ function upstreamRate() {
 
 function refresh(key, lat, lon, radius) {
   const p = (async () => {
-    const url = `${UPSTREAM}/${lat}/${lon}/${radius}`;
     const t0 = Date.now();
     stats.upstreamCalls++;
     stats.upstreamWindow.push(t0);
+    let lastErr = null;
     try {
-      const res = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "streetwatch-adsb-proxy/1.0" },
-      });
-      if (!res.ok) throw new Error(`upstream ${res.status}`);
-      const data = normalize(await res.json());
-      cache.set(key, { t: Date.now(), data });
-      return data;
-    } catch (e) {
+      for (let i = 0; i < UPSTREAMS.length; i++) {
+        const src = UPSTREAMS[i];
+        const url = src.tpl
+          .replace("{lat}", lat).replace("{lon}", lon).replace("{radius}", radius);
+        // Without a timeout a hung upstream hangs the request forever and the fallback never runs,
+        // which would make this whole list decorative.
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), UPSTREAM_TIMEOUT_MS);
+        try {
+          const res = await fetch(url, {
+            signal: ctl.signal,
+            headers: { Accept: "application/json", "User-Agent": "streetwatch-adsb-proxy/1.0" },
+          });
+          if (!res.ok) throw new Error(`${src.name} ${res.status}`);
+          const data = normalize(await res.json());
+          data.source = src.name;
+          const b = stats.bySource[src.name] || (stats.bySource[src.name] = { ok: 0, err: 0 });
+          b.ok++;
+          if (stats.activeSource && stats.activeSource !== src.name) stats.failovers++;
+          stats.activeSource = src.name;
+          cache.set(key, { t: Date.now(), data });
+          return data;
+        } catch (e) {
+          lastErr = e;
+          const b = stats.bySource[src.name] || (stats.bySource[src.name] = { ok: 0, err: 0 });
+          b.err++;
+          // fall through to the next source
+        } finally {
+          clearTimeout(timer);
+        }
+      }
       stats.upstreamErrors++;
-      throw e;
+      throw lastErr || new Error("all upstreams failed");
     } finally {
       const ms = Date.now() - t0;
       stats.upstreamMsTotal += ms;
