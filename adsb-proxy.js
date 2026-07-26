@@ -84,6 +84,20 @@ function contactList(payload) {
   return null;
 }
 
+// ADS-B carries the callsign as 8 characters in a 6-bit alphabet where code 0 decodes to "@".
+// An aircraft broadcasting no callsign therefore arrives as "@@@@@@@@", and a partial one as
+// "RCH471@@". Passing that straight through puts raw decoder padding on screen as if it were an
+// identifier — the same class of error as any other unlabelled figure: it is not wrong data, it is
+// data presented as something it is not.
+//
+// A blank callsign is itself meaningful (military traffic frequently withholds it), but that fact
+// is carried by the ABSENCE, which the UI already renders as "no callsign" — not by showing the
+// padding characters, which tell a reader nothing.
+function cleanCallsign(raw) {
+  const cleaned = String(raw || "").replace(/[@_]/g, "").trim();
+  return cleaned || null;
+}
+
 function normalize(upstream) {
   const list = contactList(upstream) || [];
   const aircraft = list
@@ -96,7 +110,7 @@ function normalize(upstream) {
         : null;
       return {
         id: String(a.hex || "").trim(),
-        callsign: String(a.flight || "").trim() || null,
+        callsign: cleanCallsign(a.flight),
         registration: String(a.r || "").trim() || null,
         typeCode: String(a.t || "").trim() || null,
         lat: a.lat,
@@ -262,4 +276,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`ADS-B proxy on :${PORT} -> ${UPSTREAM}`));
 }
 
-module.exports = { stats, upstreamRate, normalize, contactList, fetchAircraft, createServer, handler };
+module.exports = { stats, upstreamRate, normalize, contactList, cleanCallsign, fetchAircraft, createServer, handler };
