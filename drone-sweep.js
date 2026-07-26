@@ -735,6 +735,36 @@ function start() {
 }
 
 // Contacts seen within `sinceMs` (default: 15 min = "airborne now, as far as we know")
+// ATTRIBUTION AMBIGUITY. site_dist_nm measures the distance to the nearest WATCHED SITE, not to
+// the nearest airfield — so "low and close to Hurlburt" can describe an aircraft that was actually
+// operating at Bob Sikes 1nm away, or at Duke Field, neither of which we watch. Where two watched
+// sites sit within AMBIGUOUS_NM of each other, a single approach can plausibly belong to either and
+// the figure cannot say which.
+//
+// This only catches ambiguity between sites we ALREADY WATCH. Untracked airfields inside a radius
+// are invisible to it and remain the larger problem — see the airfield-discovery spec.
+const AMBIGUOUS_NM = Number(process.env.AMBIGUOUS_SITE_NM || 15);
+
+const NEIGHBOURS = (() => {
+  const named = SITES.filter((x) => x[1] !== 'Deep sweep');
+  const m = new Map();
+  for (let i = 0; i < named.length; i++) {
+    for (let j = i + 1; j < named.length; j++) {
+      const d = distNm(named[i][2], named[i][3], named[j][2], named[j][3]);
+      if (d > AMBIGUOUS_NM) continue;
+      if (!m.has(named[i][0])) m.set(named[i][0], []);
+      if (!m.has(named[j][0])) m.set(named[j][0], []);
+      m.get(named[i][0]).push({ site: named[j][0], nm: Math.round(d * 10) / 10 });
+      m.get(named[j][0]).push({ site: named[i][0], nm: Math.round(d * 10) / 10 });
+    }
+  }
+  return m;
+})();
+
+function neighboursOf(site) {
+  return NEIGHBOURS.get(site) || [];
+}
+
 function getDrones(sinceMs = 15 * 60 * 1000) {
   const cutoff = Date.now() - sinceMs;
   const drones = Array.from(seen.values())
@@ -761,6 +791,7 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
       // real countries are therefore computed by excluding the grid explicitly.
       namedSites: SITES.filter((x) => x[1] !== 'Deep sweep').length,
       countries: new Set(SITES.filter((x) => x[1] !== 'Deep sweep').map((x) => x[1])).size,
+      ambiguousSites: NEIGHBOURS.size,
       visited: Math.max(0, (queue.length ? passSize - queue.length : passSize)),
       passSize,
       hotSites: tiers.hot,                 // airspaces actually active
@@ -795,4 +826,6 @@ function getTrack(id) {
   return { id: s.id, callsign: s.callsign, site: s.site, firstSeen: s.firstSeen, lastSeen: s.lastSeen, track: s.track };
 }
 
-module.exports = { start, getDrones, getTrack, seedTiersFromArchive, SITES, _buildPass: buildPass, _seen: seen, _sweepOnce: sweepOnce };
+module.exports = {
+  neighboursOf,
+  AMBIGUOUS_NM, start, getDrones, getTrack, seedTiersFromArchive, SITES, _buildPass: buildPass, _seen: seen, _sweepOnce: sweepOnce };
