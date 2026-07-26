@@ -688,6 +688,10 @@ function record(a, site, cls) {
     callsign: a.callsign || null, typeCode: a.typeCode || null,
     registration: a.registration || null, desc: a.desc || null, military: a.military ?? null,
     lat: a.lat, lon: a.lon, altFt: a.altFt, groundSpeedKt: a.groundSpeedKt, headingDeg: a.headingDeg,
+    // How this position was derived. A contact plotted from an MLAT estimate is not the same
+    // claim as one that broadcast its own GPS fix, so the method travels with the contact.
+    posMethod: a.posMethod || null, posBasis: a.posBasis || null,
+    posDetail: a.posDetail || null, posComputed: a.posComputed ?? null,
     site: site[0], country: site[1], siteLat: site[2], siteLon: site[3],
     siteDistNm: Math.round(distNm(a.lat, a.lon, site[2], site[3]) * 10) / 10,
     firstSeen: now, lastSeen: now, track: [point],
