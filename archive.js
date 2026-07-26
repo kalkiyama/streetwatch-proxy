@@ -71,6 +71,11 @@ async function init() {
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_icao_ts ON drone_tracks (icao, ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_ts ON drone_tracks (ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_site_ts ON drone_tracks (site, ts DESC)`);
+    // Rows written before the callsign padding fix hold literal "@@@@@@@@" — the ADS-B unset
+    // marker, stored as if it were an identifier. New writes are cleaned at the proxy, but the
+    // 90-day archive would keep surfacing the old ones in track and path views until they aged
+    // out. Idempotent: after the first run this matches nothing.
+    await pool.query(`UPDATE drone_tracks SET callsign = NULL WHERE callsign ~ '^[@_[:space:]]*$'`);
     // existing deployments predate this column
     await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS site_dist_nm DOUBLE PRECISION`);
     ready = true;
