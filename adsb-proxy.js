@@ -151,7 +151,16 @@ function refresh(key, lat, lon, radius) {
             headers: { Accept: "application/json", "User-Agent": "streetwatch-adsb-proxy/1.0" },
           });
           if (!res.ok) throw new Error(`${src.name} ${res.status}`);
-          const data = normalize(await res.json());
+          const payload = await res.json();
+          // A 200 that parses as JSON is NOT success. adsb.fi returns 200 with a different shape
+          // and no `ac` array, which normalize() would quietly turn into "zero aircraft" — worse
+          // than an error, because empty reads as "nothing is there" rather than "this source is
+          // broken". That is the absence-is-not-evidence failure arriving through the back door.
+          // Require the shape we actually consume, or fall through to the next source.
+          if (!Array.isArray(payload && payload.ac)) {
+            throw new Error(`${src.name} unexpected payload shape (no ac[])`);
+          }
+          const data = normalize(payload);
           data.source = src.name;
           const b = stats.bySource[src.name] || (stats.bySource[src.name] = { ok: 0, err: 0 });
           b.ok++;
