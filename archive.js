@@ -581,6 +581,9 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
   if (!ready) return { enabled: false, visits: [], aircraft: [] };
   const d = Math.max(1, Math.min(90, Number(days) || 7));
   const stops = Math.max(2, Math.min(10, Number(minStops) || 2));
+  const lim = Math.max(1, Math.min(200, Number(limit) || 40));
+  // Fail fast and visibly rather than hanging until the platform kills the connection.
+  await pool.query("SET LOCAL statement_timeout = 15000").catch(() => {});
   const { rows } = await pool.query(
     `WITH terminal AS (
        SELECT icao, site, country, ts, callsign, type_code, descr, kind
@@ -619,13 +622,16 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
          FROM grouped GROUP BY icao, visit_no, site
      ),
      qualifying AS (
-       SELECT icao FROM visits
+       SELECT icao, count(*)::int AS visit_count
+         FROM visits
         GROUP BY icao
        HAVING count(*) >= $3 AND count(DISTINCT site) >= 2
+        ORDER BY count(*) DESC
+        LIMIT $4
      )
-     SELECT v.* FROM visits v JOIN qualifying q ON q.icao = v.icao
-      ORDER BY v.icao, v.first_seen`,
-    [d, VISIT_GAP_H, stops]
+     SELECT v.*, q.visit_count FROM visits v JOIN qualifying q ON q.icao = v.icao
+      ORDER BY q.visit_count DESC, v.icao, v.first_seen`,
+    [d, VISIT_GAP_H, stops, lim]
   );
 
   // Fold the flat visit rows into one itinerary per aircraft.
@@ -660,8 +666,7 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
       spanHours: Math.round((t1 - t0) / 36e5 * 10) / 10,
       route: a.stops.map((s) => s.site).join(" -> "),
     };
-  }).sort((x, y) => y.stopCount - x.stopCount || x.spanHours - y.spanHours)
-    .slice(0, Math.max(1, Math.min(200, Number(limit) || 40)));
+  }).sort((x, y) => y.stopCount - x.stopCount || x.spanHours - y.spanHours);
 
   return {
     enabled: true,
