@@ -9,7 +9,7 @@
 // government and test platforms) AND that a volunteer receiver can hear.
 // Consumer drones use short-range Remote ID and never appear here.
 
-const { fetchAircraft } = require("./adsb-proxy");
+const { fetchAircraft, stats: adsbStats } = require("./adsb-proxy");
 const archive = require("./archive.js");
 
 // ICAO type designators for uncrewed platforms that often DON'T squawk category B6.
@@ -739,7 +739,12 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
     .map(({ track, ...rest }) => ({ ...rest, trackPoints: track.length }));
   const byKind = drones.reduce((m, d) => ((m[d.kind] = (m[d.kind] || 0) + 1), m), {});
   return {
-    source: "airplanes.live · ADS-B (category B6, UAV type codes, military registry flag)",
+    // Read the provider that ACTUALLY answered rather than naming one. With an upstream fallback
+    // list in place, a hardcoded "airplanes.live" would silently become false the first time the
+    // primary went down — the same defect class this project exists to catch, in its own metadata.
+    source: `${(adsbStats && adsbStats.activeSource) || "ADS-B upstream"} · ADS-B (category B6, UAV type codes, military registry flag)`,
+    upstream: (adsbStats && adsbStats.activeSource) || null,
+    upstreamFailovers: (adsbStats && adsbStats.failovers) || 0,
     updated: new Date().toISOString(),
     sweep: {
       sites: SITES.length,

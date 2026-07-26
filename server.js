@@ -209,6 +209,12 @@ async function handler(req, res) {
         upstreamAvgMs: a.upstreamCalls ? Math.round(a.upstreamMsTotal / a.upstreamCalls) : null,
         upstreamRecentAvgMs: a.recentMs && a.recentMs.length
           ? Math.round(a.recentMs.reduce((x, y) => x + y, 0) / a.recentMs.length) : null,
+        // Which upstream is actually answering, and how often we have had to switch. A silent
+        // failover changes coverage — a different receiver network sees different aircraft — so
+        // it must be observable rather than invisible.
+        activeSource: a.activeSource || null,
+        failovers: a.failovers || 0,
+        bySource: a.bySource || {},
       },
       sweep: droneSweep.getDrones ? (() => { const s = droneSweep.getDrones(60).sweep;
         return { sites: s.sites, passSize: s.passSize, hotSites: s.hotSites, cycles: s.cycles, errors: s.errors }; })() : null,
