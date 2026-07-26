@@ -73,8 +73,19 @@ const cache = new Map();       // key -> { t, data }
 const inflight = new Map();    // key -> Promise  (coalesce concurrent identical calls)
 
 // Normalize the ADS-B Exchange v2 aircraft objects into a clean, stable schema.
+// The providers carry the same readsb payload under DIFFERENT KEYS: airplanes.live and adsb.lol
+// use `ac`, adsb.fi uses `aircraft`. Verified against all three live endpoints — the adsb.fi URL
+// was right all along; only the key differed. One helper knows this so the validator and the
+// parser can never disagree about what a usable payload looks like.
+function contactList(payload) {
+  if (!payload) return null;
+  if (Array.isArray(payload.ac)) return payload.ac;
+  if (Array.isArray(payload.aircraft)) return payload.aircraft;
+  return null;
+}
+
 function normalize(upstream) {
-  const list = Array.isArray(upstream && upstream.ac) ? upstream.ac : [];
+  const list = contactList(upstream) || [];
   const aircraft = list
     .filter((a) => typeof a.lat === "number" && typeof a.lon === "number")
     .map((a) => {
@@ -157,8 +168,8 @@ function refresh(key, lat, lon, radius) {
           // than an error, because empty reads as "nothing is there" rather than "this source is
           // broken". That is the absence-is-not-evidence failure arriving through the back door.
           // Require the shape we actually consume, or fall through to the next source.
-          if (!Array.isArray(payload && payload.ac)) {
-            throw new Error(`${src.name} unexpected payload shape (no ac[])`);
+          if (!contactList(payload)) {
+            throw new Error(`${src.name} unexpected payload shape (no ac[]/aircraft[])`);
           }
           const data = normalize(payload);
           data.source = src.name;
@@ -251,4 +262,4 @@ if (require.main === module) {
   createServer().listen(PORT, () => console.log(`ADS-B proxy on :${PORT} -> ${UPSTREAM}`));
 }
 
-module.exports = { stats, upstreamRate, normalize, fetchAircraft, createServer, handler };
+module.exports = { stats, upstreamRate, normalize, contactList, fetchAircraft, createServer, handler };
