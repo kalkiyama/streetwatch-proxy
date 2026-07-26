@@ -646,12 +646,20 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
     cur.kind = cur.kind || r.kind || null;
     const first = new Date(r.first_seen).getTime();
     const last = new Date(r.last_seen).getTime();
+    const mins = Math.round((last - first) / 60000);
     cur.stops.push({
       site: r.site, country: r.country,
       firstSeen: r.first_seen, lastSeen: r.last_seen,
       // "At least" because we only know the span we OBSERVED it inside the terminal area.
-      observedMinutes: Math.round((last - first) / 60000),
+      observedMinutes: mins,
       points: r.points,
+      // EVIDENCE STRENGTH. A single sweep observation and six hours of continuous tracking are not
+      // the same claim, and rendering both as "a stop" invites equal belief in both. One point with
+      // zero duration means the rotating sweep caught it low and close ONCE — consistent with a
+      // stop, and equally consistent with a low approach it then flew away from.
+      evidence: r.points >= 5 && mins >= 20 ? "sustained"
+              : r.points >= 2 || mins >= 5 ? "repeated"
+              : "single sighting",
     });
     byIcao.set(r.icao, cur);
   }
@@ -664,7 +672,19 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
       stopCount: a.stops.length,
       distinctSites: new Set(a.stops.map((s) => s.site)).size,
       spanHours: Math.round((t1 - t0) / 36e5 * 10) / 10,
-      route: a.stops.map((s) => s.site).join(" -> "),
+      // Consecutive visits to the SAME field are separate visits (a gap split them), but printing
+      // "Brize Norton -> Brize Norton -> Brize Norton" reads as three destinations rather than
+      // three returns. Collapse the repeats and count them instead.
+      route: a.stops.reduce((acc, s) => {
+        const last = acc[acc.length - 1];
+        if (last && last.site === s.site) { last.n += 1; return acc; }
+        acc.push({ site: s.site, n: 1 });
+        return acc;
+      }, []).map((x) => (x.n > 1 ? `${x.site} (x${x.n})` : x.site)).join(" -> "),
+      // How many stops rest on a single sighting. A 6-stop itinerary where 5 are single sightings
+      // is a much weaker claim than one where 5 are sustained, and the difference must be visible.
+      sustainedStops: a.stops.filter((s) => s.evidence === "sustained").length,
+      singleSightingStops: a.stops.filter((s) => s.evidence === "single sighting").length,
     };
   }).sort((x, y) => y.stopCount - x.stopCount || x.spanHours - y.spanHours);
 
@@ -678,7 +698,8 @@ async function multiStop(days = 7, minStops = 2, limit = 40) {
       "A gap between stops means it was not seen in between, not that it flew directly.",
       "Dwell is the OBSERVED span inside the terminal area, so it is a lower bound.",
       "The sweep rotates; a missed stop is not evidence there was none.",
-      "Airfields closer than about 20nm can both register one approach.",
+      "Airfields closer than about 20nm can both register one approach — an itinerary alternating between two neighbouring fields (Eglin/Hurlburt/Duke, for example) is more likely local pattern work than separate logistics stops.",
+    "Each stop carries an `evidence` value: sustained (5+ observations over 20+ minutes), repeated, or single sighting. A single sighting is one sweep catching the aircraft low and close once — consistent with a stop, and equally consistent with an approach it flew away from.",
     ],
     count: aircraft.length,
     aircraft,
