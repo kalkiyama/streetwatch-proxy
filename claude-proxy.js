@@ -213,6 +213,11 @@ revisited only periodically. Totals describe WHAT THIS WATCH RECORDED in the air
 during the window. Say "across the watched airspaces" or "in the airspaces polled", never anything
 that implies complete worldwide coverage.
 
+UAV AND MILITARY COUNTS OVERLAP — they are not a breakdown of the total. Classification is stored
+per observation, so an aircraft seen as military on one pass and as a UAV on another is counted in
+both. When bothKinds is above zero, never present the two as if they sum to the total; say the
+overlap exists if it is worth mentioning at all.
+
 LEAD WITH GEOGRAPHY AND WITH THE FIELD-LEVEL RANKING. A digest that opens with a list of eight
 airbase names tells the reader nothing about where in the world anything happened — start from the
 country rollup, then name specific sites. And when you say a base was busy, use the AT THE FIELD

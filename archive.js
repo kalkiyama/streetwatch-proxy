@@ -527,8 +527,19 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
     top: now,
     risers,
     newSites,
-    totals: { contacts: Number(t.contacts || 0), uav: Number(t.uav || 0),
-              military: Number(t.military || 0), sites: Number(t.sites || 0) },
+    // `uav` and `military` are DISTINCT-aircraft counts over a per-ROW classification, so an
+    // aircraft seen as military on one pass and UAV on another appears in BOTH. They therefore do
+    // not partition the total, and printing them beside it invites a reader to add them and find
+    // more aircraft than exist. Every archived row is one kind or the other, so the overlap is
+    // exactly uav + military - contacts. Stated rather than tidied away: an aircraft classified
+    // both ways is genuinely ambiguous, and that ambiguity is worth showing.
+    totals: (() => {
+      const contacts = Number(t.contacts || 0);
+      const uav = Number(t.uav || 0);
+      const military = Number(t.military || 0);
+      return { contacts, uav, military, sites: Number(t.sites || 0),
+               bothKinds: Math.max(0, uav + military - contacts) };
+    })(),
   };
 }
 
