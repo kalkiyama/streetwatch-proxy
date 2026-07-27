@@ -51,6 +51,36 @@ const server = createServer().listen(0, async () => {
     r = await fetch(`${base}/api/drones/track?id=ae1234`); j = await r.json();
     assert.strictEqual(r.status, 200); assert.ok(Array.isArray(j.track) && j.track.length >= 1, "track returned");
     console.log(`PASS  /api/drones/track -> ${j.track.length} point(s)`);
+    // Two entries at the same coordinates are the SAME AIRFIELD under two names. Name-based
+    // dedupe cannot see this: on Jul 26 an exact-name pass caught six duplicates, but
+    // Vladivostok/Baku/Yerevan each appeared twice at 0.1-0.3nm under DIFFERENT names and
+    // survived both that pass and a duplicate-name check run the same day. No radius fixes a
+    // 0.1nm pair — it collides at every threshold, and tightening only makes the wrong
+    // attribution more confident — so it has to be caught at the LIST, not at query time.
+    // 1nm, not 5nm: 5nm fails on legitimately close neighbours (Eglin/Hurlburt 9.3nm are fine
+    // as separate sites); what this catches is duplicate ENTRY, not close geography.
+    {
+      const { SITES } = require("./drone-sweep.js");
+      const named = SITES.filter((s) => s[1] !== "Deep sweep");
+      const nmBetween = (a, b, c, d) => {
+        const rad = (x) => (x * Math.PI) / 180, dLa = rad(c - a), dLo = rad(d - b);
+        const h = Math.sin(dLa / 2) ** 2 + Math.cos(rad(a)) * Math.cos(rad(c)) * Math.sin(dLo / 2) ** 2;
+        return 2 * (6371.0088 / 1.852) * Math.asin(Math.sqrt(h));
+      };
+      const collisions = [];
+      for (let i = 0; i < named.length; i++)
+        for (let k = i + 1; k < named.length; k++) {
+          const d = nmBetween(named[i][2], named[i][3], named[k][2], named[k][3]);
+          if (d < 1) collisions.push(`${named[i][0]} <-> ${named[k][0]} (${d.toFixed(2)}nm)`);
+        }
+      assert.strictEqual(collisions.length, 0,
+        `named sites within 1nm of each other:\n  ${collisions.join("\n  ")}`);
+      const dupNames = {};
+      named.forEach((s) => { dupNames[s[0]] = (dupNames[s[0]] || 0) + 1; });
+      const dupes = Object.keys(dupNames).filter((k) => dupNames[k] > 1);
+      assert.strictEqual(dupes.length, 0, `duplicate site names: ${dupes.join(", ")}`);
+      console.log(`PASS  site list -> ${named.length} named sites, no pair within 1nm, no duplicate names`);
+    }
     r = await fetch(`${base}/nope`); assert.strictEqual(r.status,404);
     console.log("PASS  unknown route -> 404 with route hints");
     console.log("\nCOMBINED SERVICE OK");
