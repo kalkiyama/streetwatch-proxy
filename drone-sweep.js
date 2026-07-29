@@ -612,11 +612,8 @@ function buildPass() {
   // Cap the pass so breadth can never starve freshness. `extra` is ordered warm → cold →
   // deep, so trimming from the end sheds the least valuable work first: deep cells slip a
   // cycle before cold sites do, and hot sites are never dropped at all.
-  let extra = warmSlice.concat(coldSlice, deepSlice);
-
   // Safety net: if hot alone exceeds the cap, poll the least-recently-polled hot sites
   // first and let the rest slip a pass. Without this the same sites would win every time.
-  // RESERVE keeps a few slots for breadth so cold and deep never stall completely.
   const RESERVE = Number(process.env.SWEEP_RESERVE || 8);
   const trueHot = hot.length;            // record BEFORE trimming, or we report the cap back
   let hotDeferred = 0;
@@ -626,6 +623,46 @@ function buildPass() {
     hot.length = Math.max(1, MAX_PASS - RESERVE);
   }
   const room = Math.max(0, MAX_PASS - hot.length);
+
+  // PER-TIER FLOORS — added Jul 29 after cold and deep were found to be receiving ZERO slots.
+  //
+  // THE BUG THIS REPLACES. `extra` was built as warmSlice.concat(coldSlice, deepSlice) and then
+  // truncated to `room`. RESERVE was described as keeping "a few slots for breadth so cold and
+  // deep never stall completely", but it reserved those slots for warm+cold+deep COLLECTIVELY,
+  // and warm is first in the concatenation. Measured live on Jul 29:
+  //     hot 119 (cap 52, 67 deferred) · warm 26 · cold 163 · deep 795
+  //     room = 8 · warmSlice = 8 · so warm consumed all 8 and cold + deep got NOTHING
+  // Not "rarely" — zero, on every pass, for as long as hot stayed above the cap. 958 of 1103
+  // sites were configured, counted in `sweep.sites`, and never polled. `gridPromoted` was 4 of
+  // 799 after 205 cycles, which is what a starved deep tier looks like.
+  // It also explains why four airfields added on Jul 26 had no archive rows three days later:
+  // new sites enter COLD, and COLD was not being polled at all.
+  //
+  // The property was asserted in a comment and never implemented. Now it is implemented.
+  //
+  // ALLOCATION. Each tier gets a floor of `room`; unused quota flows down to the next tier so
+  // no slot is wasted, and deep takes whatever remains. At room=8 that is 3 warm, 3 cold, 2 deep.
+  // Slow for cold — roughly one cycle every 13h at that width — but existent, which is the
+  // difference that matters. Raising SWEEP_MAX_PASS widens `room` and speeds it up; note that
+  // this does NOT poll more often (SITE_INTERVAL_MS is unchanged at one site per 15s), it trades
+  // hot-site freshness for breadth.
+  const WARM_SHARE = Number(process.env.SWEEP_WARM_SHARE || 0.4);
+  const COLD_SHARE = Number(process.env.SWEEP_COLD_SHARE || 0.4);
+  const floorOf = (frac) => (room > 0 ? Math.max(1, Math.floor(room * frac)) : 0);
+
+  // Rotate each slice by passNo before taking from it. Without this the SAME first N entries of
+  // a slice are taken every time that residue class comes round, so a fixed subset of cold sites
+  // would be polled forever and the rest never — the starvation bug one level down.
+  const rot = (arr) => (arr.length ? arr.slice(passNo % arr.length).concat(arr.slice(0, passNo % arr.length)) : arr);
+
+  let budget = room;
+  const takeWarm = rot(warmSlice).slice(0, Math.min(floorOf(WARM_SHARE), budget));
+  budget -= takeWarm.length;
+  const takeCold = rot(coldSlice).slice(0, Math.min(floorOf(COLD_SHARE) + (floorOf(WARM_SHARE) - takeWarm.length), budget));
+  budget -= takeCold.length;
+  const takeDeep = rot(deepSlice).slice(0, budget);
+
+  let extra = takeWarm.concat(takeCold, takeDeep);
   if (extra.length > room) extra = extra.slice(0, room);
   // interleave so the pass is not front-loaded with hot sites
   const out = [];
@@ -635,7 +672,11 @@ function buildPass() {
   while (ci < extra.length) out.push(extra[ci++]);
   queue = out.length ? out : SITES.map((_, i) => i);
   passSize = queue.length;
-  tiers = { hot: trueHot, hotPolled: hot.length, hotDeferred, warm: warm.length, cold: cold.length, deep: deep.length };
+  // polledWarm/Cold/Deep make tier starvation VISIBLE. Without them the only way to find
+  // out that cold was getting zero slots was to re-derive buildPass by hand from the tier
+  // counts — which is how the Jul 29 bug stayed hidden.
+  tiers = { hot: trueHot, hotPolled: hot.length, hotDeferred, warm: warm.length, cold: cold.length, deep: deep.length,
+            polledWarm: takeWarm.length, polledCold: takeCold.length, polledDeep: takeDeep.length };
   return passSize;
 }
 let cycles = 0, sweepErrors = 0, lastSweepAt = null;
