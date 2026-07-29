@@ -835,6 +835,14 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
       hotDeferred: tiers.hotDeferred,      // active but slipped to the next pass
       warmSites: tiers.warm,
       coldSites: tiers.cold,
+      // WHAT THE PASS ACTUALLY DID, as opposed to what the tiers contain. Added Jul 29:
+      // cold and deep had been receiving ZERO slots on every pass — 958 of 1103 sites
+      // configured, counted in `sites`, and never polled — and the ONLY way to discover it
+      // was to re-derive buildPass by hand from the tier counts. A population is not an
+      // allocation, and reporting the first without the second hid the bug completely.
+      polledWarm: tiers.polledWarm,
+      polledCold: tiers.polledCold,
+      polledDeep: tiers.polledDeep,
       // NAMING TRAP: deepCells is a TIER POPULATION — grid cells currently in the slow rotation —
       // not the size of the grid. A cell that produces contacts is PROMOTED to a faster tier and
       // leaves this count, so namedSites + deepCells does NOT equal sites, and shouldn't.
