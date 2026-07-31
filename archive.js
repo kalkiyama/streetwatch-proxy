@@ -68,12 +68,16 @@ async function init() {
         site_dist_nm DOUBLE PRECISION,
         country     TEXT,
         pos_method  TEXT,      -- ADS-B | ADS-R | TIS-B | MLAT | ADS-C | Mode S
-        pos_computed BOOLEAN   -- true when the position was NOT self-reported
+        pos_computed BOOLEAN,  -- true when the position was NOT self-reported
+        agl_ft      INTEGER    -- height above field. NULL = ground level UNKNOWN, not zero.
+                               -- Filtering on this WITHOUT stating a null policy silently drops
+                               -- ~40% of rows, which is the site_dist_nm defect (PP-12) repeated.
       )`);
     // The table already exists in production, so the CREATE above is a no-op there — new columns
     // have to be added explicitly or the INSERT below fails on every write.
     await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS pos_method TEXT`);
     await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS pos_computed BOOLEAN`);
+    await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS agl_ft INTEGER`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_icao_ts ON drone_tracks (icao, ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_ts ON drone_tracks (ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_site_ts ON drone_tracks (site, ts DESC)`);
@@ -98,6 +102,11 @@ async function init() {
 }
 
 // Queue one observation. Nothing touches the database until flush().
+// Height above field needs a ground elevation, and alt_ft is BAROMETRIC — above sea level. A flat
+// ceiling therefore means something different at every site: 1,000ft admits anything under 2,700ft
+// AGL at a 300ft coastal field and excludes aircraft PARKED at Kabul (5,877ft).
+const airfields = require("./airfields.js");
+
 function record(c) {
   if (!ready) return;
   if (c.kind !== "uav" && c.kind !== "military") return;   // scope guard
@@ -111,6 +120,14 @@ function record(c) {
     Number.isFinite(c.siteDistNm) ? c.siteDistNm : null,
     c.posMethod || null,
     typeof c.posComputed === "boolean" ? c.posComputed : null,
+    // HEIGHT ABOVE FIELD, or NULL when ground level cannot be established — no reference airfield
+    // within range, or terrain rough enough that a single-field elevation proxy is void (an
+    // airfield on a mesa says nothing about the valley below it).
+    // NULL MEANS UNKNOWN. It must never be read as zero, and any query filtering on agl_ft has to
+    // say what it does with nulls — see the schema comment. Roughly 40% of rows will be null.
+    // The figure is PRESSURE altitude minus a proxy ground level, so it carries up to ~800ft of
+    // error from local QNH alone. Better than a sea-level ceiling; not precision.
+    Number.isFinite(c.altFt) ? airfields.heightAboveField(c.lat, c.lon, Math.round(c.altFt)) : null,
   ]);
   if (buffer.length >= FLUSH_MAX) flush();
 }
@@ -120,7 +137,10 @@ async function flush() {
   if (!ready || buffer.length === 0) return;
   const batch = buffer;
   buffer = [];
-  const COLS = 17;   // keep in step with the INSERT column list below
+  const COLS = 18;   // MUST equal the INSERT column list below. A mismatch fails every write.
+  // Jul 31: went 17 -> 18 for agl_ft. This constant and the column list are coupled by a
+  // COMMENT, not by anything that checks. If they drift, flush() throws on every batch and
+  // the archive silently stops recording while the sweep carries on as normal.
   const values = batch.map((_, i) => {
     const b = i * COLS;
     const ph = [];
@@ -131,7 +151,7 @@ async function flush() {
   try {
     await pool.query(
       `INSERT INTO drone_tracks
-        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country, site_dist_nm, pos_method, pos_computed)
+        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country, site_dist_nm, pos_method, pos_computed, agl_ft)
        VALUES ${values}`,
       batch.flat()
     );
