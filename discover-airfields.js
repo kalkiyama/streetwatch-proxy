@@ -1,6 +1,19 @@
 #!/usr/bin/env node
 /*
- * discover-airfields.js — find airfields from how aircraft BEHAVE, not from a register.
+ * discover-airfields.js — find places where military aircraft repeatedly operate AT GROUND LEVEL,
+ * from how they behave, not from any register.
+ *
+ * WHAT IT ACTUALLY FINDS — established Jul 30, and it is broader than the name suggests.
+ * The first candidate to survive every filter was -40.2068, 175.2150 in New Zealand: two clusters
+ * 0.88nm apart, both at ground level, 5 airframes over 5 days, nothing catalogued within 15nm.
+ * It is RAUMAI AIR WEAPONS RANGE, on the coast west of RNZAF Ohakea. NZDF describes NH90 gunnery
+ * and live-firing there day and night, AND a field exercise where NH90s LANDED to be loaded with
+ * flares. So aircraft genuinely land there — the ground-level clusters are literal landings.
+ * It is absent from all 85,809 OurAirports records, CORRECTLY: it is not an airfield.
+ * So the output covers airfields, weapons ranges, landing zones, forward loading points and
+ * low-level training areas. A cluster that matches no airfield is NOT a failed detection — it may
+ * be a real site of a different KIND. Read the unmatched list as "ground-level military activity
+ * with no airfield to explain it", never as "an airfield the databases missed".
  *
  * RUN:  cd ~/streetwatch-proxy
  *       node discover-airfields.js                 # uses $DATABASE_URL
@@ -303,7 +316,9 @@ function parseCsv(text) {
   const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(0)}%` : "—");
   console.log("═".repeat(78));
   console.log(`CLUSTERS ${scored.length} · airfield-like ${confirmed.length + candidate.length} · horizon-like ${horizon.length}`);
-  console.log(`VALIDATION: ${confirmed.length}/${confirmed.length + candidate.length} (${pct(confirmed.length, confirmed.length + candidate.length)}) of airfield-like clusters match a KNOWN airfield within ${MATCH_NM}nm.`);
+  console.log(`VALIDATION: ${confirmed.length}/${confirmed.length + candidate.length} (${pct(confirmed.length, confirmed.length + candidate.length)}) of clusters match a KNOWN airfield within ${MATCH_NM}nm.`);
+  console.log("This measures ENDPOINT DETECTION, not completeness. A high figure means the clustering");
+  console.log("finds real places. It does NOT mean the unmatched remainder are errors — see below.");
   console.log("If that number is high, the method works. If it is low, the method is finding noise —");
   console.log("read the candidates as suspect, not as discoveries.");
   console.log("═".repeat(78));
@@ -324,10 +339,12 @@ function parseCsv(text) {
   console.log(`\n── CONFIRMED — the method rediscovered a known airfield (${confirmed.length}) ──`);
   confirmed.slice(0, 25).forEach(show);
 
-  console.log(`\n── CANDIDATES — airfield behaviour, NOTHING within ${MATCH_NM}nm in 85k records (${candidate.length}) ──`);
-  console.log("   Each line now shows its NEAREST known airfield regardless of distance. A candidate whose");
-  console.log("   nearest is 3.1nm away is a NEAR-MISS on --match-nm, not a discovery. Only the ones whose");
-  console.log("   nearest is genuinely far are new. Check those against imagery before claiming them.");
+  console.log(`\n── UNMATCHED — ground-level activity with NO airfield within ${MATCH_NM}nm (${candidate.length}) ──`);
+  console.log("   NOT failed airfield detections. These are places aircraft repeatedly reach ground level");
+  console.log("   where no catalogued airfield explains it — which is how RAUMAI AIR WEAPONS RANGE was");
+  console.log("   found. Ranges, landing zones and training areas are legitimately absent from airfield");
+  console.log("   registers. Each line shows its nearest known airfield regardless of distance: one at");
+  console.log("   3.1nm is a NEAR-MISS on --match-nm, not a finding. Verify the far ones before claiming.");
   candidate.slice(0, 25).forEach(show);
 
   console.log(`\n── HORIZON-LIKE — rejected as coverage edge, not airfield (${horizon.length}) ──`);
