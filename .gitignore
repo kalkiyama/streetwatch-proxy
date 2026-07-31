@@ -5,3 +5,6 @@ node_modules/
 .DS_Store
 airports.csv
 airfields.txt
+airfields3.txt
+airfields4.txt
+airfields*.txt
