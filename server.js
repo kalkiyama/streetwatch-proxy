@@ -15,6 +15,7 @@ const http = require("http");
 const adsb = require("./adsb-proxy.js");
 const ais = require("./ais-proxy.js");
 const droneSweep = require("./drone-sweep.js");
+const airfields = require("./airfields.js");
 const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
 const ai = require("./claude-proxy.js");
@@ -413,7 +414,13 @@ async function handler(req, res) {
       // overlap outright — an aircraft between them is inside both and gets attributed to whichever
       // is marginally nearer. The reader has to be told that, not left to assume precision.
       .map((r) => ({ ...r, lat: sites[r.site].lat, lon: sites[r.site].lon,
-                     nearbySites: droneSweep.neighboursOf ? droneSweep.neighboursOf(r.site) : [] }));
+                     nearbySites: droneSweep.neighboursOf ? droneSweep.neighboursOf(r.site) : [],
+                     // The nearest REAL airfield to this watched point, from the 85,758-record
+                     // reference set. A grid cell named "Deep sweep 30.5N 88.1W" tells a reader
+                     // nothing; "Mobile Downtown Airport (KBFM), 5.8nm" tells them where they are.
+                     // NOT the same claim as the site name: this is what is NEARBY, not what the
+                     // contacts were attributed to. The UI must not present it as the operator.
+                     nearestAirfield: airfields.describe(sites[r.site].lat, sites[r.site].lon) }));
     const max = out.reduce((m, r) => Math.max(m, r.contacts), 0) || 1;
     return send(res, 200, {
       archiveAgeHours: await archive.ageHours(),
@@ -433,16 +440,13 @@ async function handler(req, res) {
       count: out.length,
       // Radius metadata travels with the data so no surface can display a regional count
       // as if it were a base count. maxContacts lets the client scale colour logarithmically.
+      // NOTE: maxContacts, maxByRadius and radiiNm were each declared TWICE in this object, and
+      // the second maxByRadius omitted the `field` key. JavaScript keeps the LAST duplicate, so
+      // the field maximum never reached the client and HeatMap fell back to the 250nm max —
+      // scaling the "at the field" colour by a number ~65x too large and rendering every site
+      // pale. Fixed Jul 31. Do not reintroduce a second declaration of any of these keys.
       sweepRadiusNm: 250,
       nearRadiusNm: 25,
-      maxContacts: max,
-      // maxima per radius so the client can scale colour correctly at whichever it displays
-      maxByRadius: {
-        25: Math.max(1, ...out.map((r) => r.c25 || 0)),
-        100: Math.max(1, ...out.map((r) => r.c100 || 0)),
-        250: max,
-      },
-      radiiNm: [25, 100, 250],
       sites: out.map((r) => ({ ...r, intensity: Number((r.contacts / max).toFixed(3)) })),
     }, origin);
   }
