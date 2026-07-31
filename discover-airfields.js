@@ -47,7 +47,9 @@ const GAP_MIN     = Number(opt("gap-min", 240));   // minutes of silence that en
                                                    // sites are polled every ~2.5h, so a smaller value makes
                                                    // every poll look like a new arrival. At 25min a single
                                                    // PARKED aircraft produced 123 phantom events at one point.
-const LOW_FT      = Number(opt("low-ft", 3000));   // endpoint altitude ceiling (BAROMETRIC, see note)
+const LOW_FT      = Number(opt("low-ft", 3000));   // no longer used as a fallback; kept for --low-ft runs
+const LOW_AGL_FT  = Number(opt("low-agl", 500));   // endpoint ceiling ABOVE FIELD — the real filter
+const GROUND_REF_NM = Number(opt("ground-ref-nm", 15));  // how far to look for a ground-elevation proxy
 const SLOW_KT     = Number(opt("slow-kt", 200));   // endpoint speed ceiling
 const CELL_DEG    = Number(opt("cell", 0.02));     // ~1.2nm clustering cell
 const MIN_EVENTS  = Number(opt("min-events", 3));  // events before a cluster is reported
@@ -126,6 +128,30 @@ function parseCsv(text) {
     return best ? { ...best, distNm: bd } : null;
   };
 
+  // TERRAIN ROUGHNESS, used to decide whether a ground-elevation PROXY is trustworthy.
+  // Two different effects produce a negative height-above-field and they OVERLAP in range, so no
+  // fixed cutoff can separate them:
+  //   1. BAROMETRIC PRESSURE. ADS-B sends pressure altitude referenced to 1013.25 hPa, not local
+  //      QNH. At ~27ft per hPa and a real-world range of ~980-1040, a parked aircraft at a
+  //      sea-level field genuinely reads anywhere from about +1,400ft to -720ft. Laughlin at
+  //      -32ft and North Island at -26ft are exactly this, and both are correct detections.
+  //   2. A BAD GROUND PROXY. Using the nearest airfield's elevation assumes flat terrain. At
+  //      Los Alamos — an airfield on a MESA at 7,171ft, with the valley far below — a cluster
+  //      came out at -946ft AGL. Nothing is wrong with the aircraft; the reference is wrong.
+  // Rejecting on the NUMBER would discard case 1 along with case 2. Rejecting on the CAUSE works:
+  // if the reference airfields within range disagree wildly about their own elevation, the
+  // terrain is not flat and no single-field proxy means anything there.
+  //   Laughlin neighbourhood: everything ~1,000-1,100ft. spread small, proxy sound.
+  //   Los Alamos neighbourhood: 6,348 / 6,433 / 7,012 / 7,171 / 7,200. spread 852ft, proxy void.
+  const ROUGH_FT = Number(opt("rough-ft", 500));
+  const terrainSpread = (la, lo, withinNm) => {
+    const el = [];
+    for (const k of kIdx.get(kkey(la, lo)) || [])
+      if (k.elev != null && nm(la, lo, k.lat, k.lon) <= withinNm) el.push(k.elev);
+    if (el.length < 2) return 0;              // nothing to disagree with
+    return Math.max(...el) - Math.min(...el);
+  };
+
   // ---------- 2. archive ----------
   if (!process.env.DATABASE_URL) { console.error("DATABASE_URL not set"); process.exit(1); }
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -149,12 +175,46 @@ function parseCsv(text) {
   // ---------- 3. segment tracks, extract endpoints ----------
   const GAP_MS = GAP_MIN * 60000, OBS_MS = GAP_MS;
   const events = [];
+  // hoisted out of flush(): these count across the WHOLE run, not per segment
+  let noGroundRef = 0, roughTerrain = 0;
   let seg = [];
   const flush = () => {
     if (!seg.length) return;
     const first = seg[0], last = seg[seg.length - 1];
-    const lowSlow = (r) =>
-      r.alt_ft != null && r.alt_ft < LOW_FT && (r.speed_kt == null || r.speed_kt < SLOW_KT);
+    // HEIGHT ABOVE FIELD, not barometric altitude. alt_ft is above SEA LEVEL, so a flat ceiling
+    // means completely different things at different places: 3,000ft admits anything under
+    // 2,700ft AGL at a 300ft coastal field, and excludes aircraft PARKED at Kabul (5,877ft).
+    // The first run of this script showed the cost directly — roughly half the candidates were
+    // aircraft leaving coverage in level flight at 1,600-1,900ft AGL, not landing.
+    //
+    // There is no terrain dataset here, so ground level is taken from the NEAREST REFERENCE
+    // AIRFIELD's elevation. That is a PROXY, and it is stated as one: terrain varies slowly over
+    // 15nm in most places, but in mountainous country it will be wrong, and where no reference
+    // field is within GROUND_REF_NM the barometric fallback applies and the event is counted
+    // separately so the fallback's share is visible rather than assumed small.
+    const groundAt = (la, lo) => {
+      const k = nearestKnown(la, lo);
+      return k && k.distNm <= GROUND_REF_NM && k.elev != null ? k.elev : null;
+    };
+    const lowSlow = (r) => {
+      if (r.alt_ft == null) return false;
+      if (r.speed_kt != null && r.speed_kt >= SLOW_KT) return false;
+      // NO GUESSING. The first attempt at this fell back to a LOOSER barometric ceiling wherever
+      // AGL could not be established — 3,000ft instead of 500ft AGL — which made the filter MORE
+      // permissive exactly where we knew LESS. Measured cost: ground-reference coverage fell to
+      // 43%, endpoints rose 10,635 -> 12,984, candidates 42 -> 61, validation 93% -> 92%. The
+      // transit cases the AGL filter exists to remove came straight back in through the fallback.
+      // If height above ground is unknown, a landing cannot be told from an overflight, so the
+      // endpoint is DISCARDED. That loses coverage in mountains — where unlisted strips are most
+      // likely — and it is the correct trade, because a candidate you cannot trust is worse than
+      // one you never saw. The excluded counts are printed so the loss is visible, not silent.
+      const g = groundAt(r.lat, r.lon);
+      if (g == null) { noGroundRef++; return false; }
+      if (terrainSpread(r.lat, r.lon, GROUND_REF_NM) > ROUGH_FT) { roughTerrain++; return false; }
+      r._aglFt = r.alt_ft - g;
+      r._groundFt = g;
+      return r._aglFt < LOW_AGL_FT;
+    };
 
     // DISAPPEARANCE — only if the site demonstrably kept observing afterwards.
     const lastSeen = siteLast.get(last.site);
@@ -171,7 +231,11 @@ function parseCsv(text) {
     seg.push(r); prev = r;
   }
   flush();
-  console.log(`endpoints : ${events.filter(e=>e.ev==="vanish").length} disappearances · ${events.filter(e=>e.ev==="emerge").length} appearances (below ${LOW_FT}ft, under ${SLOW_KT}kt)\n`);
+  const withAgl = events.filter((e) => e._aglFt != null).length;
+  console.log(`endpoints : ${events.filter(e=>e.ev==="vanish").length} disappearances · ${events.filter(e=>e.ev==="emerge").length} appearances`);
+  console.log(`filter    : under ${LOW_AGL_FT}ft ABOVE FIELD and under ${SLOW_KT}kt · ${withAgl}/${events.length} had a ground reference within ${GROUND_REF_NM}nm`);
+  console.log(`            DISCARDED for unknown ground level: ${noGroundRef} no reference within ${GROUND_REF_NM}nm, ${roughTerrain} rough terrain (>${ROUGH_FT}ft spread)`);
+  console.log(`            AGL is PRESSURE altitude minus a proxy ground level: expect +/-800ft of error from QNH alone\n`);
 
   // ---------- 4. cluster ----------
   const cells = new Map();
@@ -197,6 +261,8 @@ function parseCsv(text) {
       // without adding a single new fact. Distinct airframes x distinct days is the real weight.
       days: new Set(evs.map((e) => new Date(e.ts).toISOString().slice(0, 10))).size,
       medAlt: alts.length ? alts[Math.floor(alts.length / 2)] : null,
+      medAgl: (() => { const g = evs.map((e) => e._aglFt).filter((x) => x != null).sort((a, b) => a - b);
+                       return g.length ? g[Math.floor(g.length / 2)] : null; })(),
       spreadNm: spread,
       // NOT the cluster's country — this is the country of the WATCHING SITE. It produced
       // "Ireland" for a cluster 3.1nm from RAF Shawbury, "Croatia" for one in Austria, and
@@ -247,7 +313,7 @@ function parseCsv(text) {
     console.log(
       `  ${c.lat.toFixed(4)},${c.lon.toFixed(4)}  ${String(c.icaos).padStart(2)}ac/${String(c.days).padStart(2)}d ` +
       `(${c.vanish}v/${c.emerge}e bal ${c.balance.toFixed(2)}) ${String(c.n).padStart(4)}ev ` +
-      `spread ${c.spreadNm.toFixed(1)}nm alt~${c.medAlt ?? "?"}ft  ${c.country || ""}` +
+      `spread ${c.spreadNm.toFixed(1)}nm ${c.medAgl != null ? `AGL~${c.medAgl}ft` : `alt~${c.medAlt ?? "?"}ft(baro)`}  ${c.country || ""}` +
       (c.nearest
         ? `\n        ↳ ${c.known ? "MATCH" : "NEAREST"}: ${c.nearest.name} (${c.nearest.ident}, ${c.nearest.type}, `
           + `${c.nearest.distNm.toFixed(2)}nm, elev ${c.nearest.elev ?? "?"}ft)`
