@@ -30,7 +30,11 @@ const path = require("path");
 
 const BATCH = 5000;
 const out = path.join(process.env.HOME,
-  `streetwatch-archive-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.csv.gz`);
+  // TIMESTAMP, not just a date. A date-only name silently OVERWRITES an earlier backup taken the
+  // same day — and if the second run fails partway it has destroyed the good copy while writing a
+  // truncated one. Happened on Jul 31: a re-run replaced a dump already sent off-machine, leaving
+  // the off-machine copy a schema version behind with nothing to indicate it.
+  `streetwatch-archive-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-")}.csv.gz`);
 
 // CSV escaping: quote anything containing a comma, quote, newline or carriage return, and double
 // any embedded quotes. Nulls become empty fields, which is what \copy ... WITH CSV expects.
