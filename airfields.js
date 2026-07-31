@@ -59,6 +59,17 @@ function nmBetween(aLat, aLon, bLat, bLon) {
   return 2 * (6371.0088 / 1.852) * Math.asin(Math.sqrt(h));
 }
 
+// SELF-LOADING. The first version required an explicit load() call and nothing in archive.js made
+// one, so `ready` stayed false in production and EVERY agl_ft came back null while the tests
+// passed — because the tests called load() themselves. A test that sets up a state the real caller
+// never sets up is testing something that does not exist. Loading now happens on first use.
+let loadTried = false;
+function ensure() {
+  if (ready || loadTried) return ready;
+  loadTried = true;
+  return load();
+}
+
 function load(file) {
   const p = file || path.join(__dirname, "airfields.json.gz");
   if (!fs.existsSync(p)) {
@@ -133,7 +144,7 @@ function record(i, distNm) {
  *   runwayOnly    exclude heliports and seaplane bases, for "could this explain fixed-wing?"
  */
 function nearest(lat, lon, opt = {}) {
-  if (!ready || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (!ensure() || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   const maxNm = opt.maxNm ?? 60;
   const wantClosed = opt.includeClosed === true;
   const runwayOnly = opt.runwayOnly === true;
@@ -149,7 +160,7 @@ function nearest(lat, lon, opt = {}) {
 
 /** Every reference airfield within a radius, nearest first. */
 function within(lat, lon, radiusNm, opt = {}) {
-  if (!ready || !Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+  if (!ensure() || !Number.isFinite(lat) || !Number.isFinite(lon)) return [];
   const wantClosed = opt.includeClosed === true;
   const out = [];
   for (const i of candidates(lat, lon)) {
@@ -168,7 +179,7 @@ function within(lat, lon, radiusNm, opt = {}) {
  * Closed airfields ARE used here: they cannot host traffic but they are still valid terrain samples.
  */
 function groundElevation(lat, lon) {
-  if (!ready || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (!ensure() || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   let best = -1, bd = Infinity, min = Infinity, max = -Infinity, n = 0;
   for (const i of candidates(lat, lon)) {
     if (!HASEL[i]) continue;
@@ -216,7 +227,7 @@ function describe(lat, lon, maxNm = 25, runwayNm = 12) {
 
 module.exports = {
   load, nearest, within, groundElevation, heightAboveField, describe,
-  get ready() { return ready; },
+  get ready() { return ensure(); },
   get count() { return N; },
   nmBetween,
 };
