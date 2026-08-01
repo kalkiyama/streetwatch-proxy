@@ -151,7 +151,9 @@ function nearest(lat, lon, opt = {}) {
   let best = -1, bd = Infinity;
   for (const i of candidates(lat, lon)) {
     if (!wantClosed && TYPE[i] === CLOSED) continue;
-    if (runwayOnly && (TYPE[i] === 1 || TYPE[i] === 4)) continue;   // heliport, seaplane base
+    // seaplaneOk keeps seaplane bases (4) while still excluding heliports (1)
+    if (opt.seaplaneOk === true) { if (TYPE[i] === 1) continue; }
+    else if (runwayOnly && (TYPE[i] === 1 || TYPE[i] === 4)) continue;   // heliport, seaplane base
     const d = nmBetween(lat, lon, LAT[i], LON[i]);
     if (d < bd) { bd = d; best = i; }
   }
@@ -220,8 +222,16 @@ function heightAboveField(lat, lon, altFt) {
  * database is not relevance.
  */
 function describe(lat, lon, maxNm = 25, runwayNm = 12) {
+  // THREE TIERS, not two. The first version returned the nearest field of any type and gave a
+  // seaplane heliport for the Mobile Bay cell; the second preferred runways and excluded seaplane
+  // bases ENTIRELY along with heliports — which is wrong for any aircraft that lands on water.
+  // OurAirports carries 1,274 seaplane bases and they are real operational locations. No
+  // amphibious types appear in this archive today, so the gap is unexercised rather than absent.
+  // Order: a runway describes a location best, a seaplane base is a genuine facility, a helipad is
+  // the weakest signal.
   const runway = nearest(lat, lon, { maxNm: runwayNm, runwayOnly: true });
-  const a = runway || nearest(lat, lon, { maxNm });
+  const sea = runway || nearest(lat, lon, { maxNm: runwayNm, seaplaneOk: true });
+  const a = sea || nearest(lat, lon, { maxNm });
   return a ? `${a.name}${a.ident ? ` (${a.ident})` : ""}, ${a.distNm.toFixed(1)}nm` : null;
 }
 
