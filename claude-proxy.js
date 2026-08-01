@@ -203,9 +203,11 @@ this data — never omit it when it is present.
 Write 120-180 words of PLAIN PROSE ONLY. No markdown, no "#" headings, no title, no bold, no
 bullet points. Begin with the first sentence of the briefing itself.
 
-You must include, in your own words, that these counts come only from aircraft broadcasting
-ADS-B, so aircraft with transponders switched off are not represented, and that a difference in
-counts may reflect observation coverage as easily as activity.
+Do NOT add a closing caveat about ADS-B coverage, transponders being off, or counts reflecting
+observation rather than activity. The UI prints exactly that, verbatim, directly beneath your
+output — saying it too meant the same limitation appeared TWICE on screen, roughly forty words
+apart, and spent a third of your word budget restating the footer. Describe what the numbers show;
+the surface states what they do not cover.
 
 NEVER SAY "WORLDWIDE", "GLOBAL", or "ACROSS THE WORLD". The watch polls a rotating set of named
 airspaces and grid cells — wide in reach, but nowhere near all global aviation, and each site is
@@ -292,9 +294,10 @@ You are given co-occurrences that were ALREADY COMPUTED. Use only those figures.
 
 Write 80-140 words, plain prose. For each item, say plainly what was observed near what, and when.
 
-You MUST state clearly that these are co-occurrences in time and space only, that no causal
-link is implied or observable from public data, and that both datasets are incomplete
-(aircraft with transponders off and vessels outside AIS coverage are absent).
+Do NOT add a closing caveat about co-occurrence, causality, or incomplete datasets. The UI prints
+that verbatim beneath your output. Instead, do NOT imply causation in the first place: report what
+was near what, and when, and stop there. A caveat undoing a claim you should not have made is
+worse than not making it.
 
 Never suggest an operation, exercise, response, or intent. Never name a unit or adversary.`;
 
