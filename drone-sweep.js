@@ -254,7 +254,7 @@ const SITES = [
   ["Chabelley Airfield", "Djibouti", 11.517, 43.061],
   ["Air Base 201", "Niger", 16.970, 8.000],
   ["Manda Bay", "Kenya", -2.250, 40.910],
-  ["Baledogle", "Somalia", 2.620, 44.860],
+  ["Baledogle", "Somalia", 2.671, 44.793],
   ["Cairo West", "Egypt", 30.120, 30.920],
   ["Benghazi coast", "Libya", 32.100, 20.270],
 
