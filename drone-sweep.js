@@ -251,7 +251,7 @@ const SITES = [
   ["Bagram area", "Afghanistan", 34.950, 69.260],
 
   // ---- Africa ----
-  ["Chabelley Airfield", "Djibouti", 11.520, 42.920],
+  ["Chabelley Airfield", "Djibouti", 11.517, 43.061],
   ["Air Base 201", "Niger", 16.970, 8.000],
   ["Manda Bay", "Kenya", -2.250, 40.910],
   ["Baledogle", "Somalia", 2.620, 44.860],
