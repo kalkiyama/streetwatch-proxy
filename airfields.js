@@ -232,7 +232,25 @@ function describe(lat, lon, maxNm = 25, runwayNm = 12) {
   const runway = nearest(lat, lon, { maxNm: runwayNm, runwayOnly: true });
   const sea = runway || nearest(lat, lon, { maxNm: runwayNm, seaplaneOk: true });
   const a = sea || nearest(lat, lon, { maxNm });
-  return a ? `${a.name}${a.ident ? ` (${a.ident})` : ""}, ${a.distNm.toFixed(1)}nm` : null;
+  if (!a) return null;
+  // SAY WHEN THE CHOICE WAS ARBITRARY. Returning one name silently discards every other field that
+  // was just as close: Eglin AFB reads "near Destin-Fort Walton Beach (KVPS), 0.2nm" — true, and
+  // Eglin's own entry sits at effectively the same coordinates. In dense airspace four fields can
+  // be within 12nm and the winner is decided by a hundred metres.
+  // This is the same problem as nearbySites for watched sites, which already warns. A label that
+  // names one of several without saying so is the defect this project exists to avoid.
+  // COUNT ONLY COMPARABLE FIELDS. The first version counted anything, and the Mobile Bay cell read
+  // "+4 as close" — Midstream Fuel Service x2, Ineos Phenol and Petroleum Helicopters, all oil-and-
+  // gas HELIPADS, three of them nearer than the winner. A helipad is not a competing explanation
+  // for a C-130, so counting them is noise dressed as caution.
+  // And the multiplier was too generous at distance: 1.5x of 5.8nm reaches 8.7nm, which is 50%
+  // further, not "as close". A flat +2nm says what it means at every distance.
+  const runwayTypes = new Set(["small_airport", "medium_airport", "large_airport"]);
+  const comparable = runwayTypes.has(a.type);
+  const peers = within(lat, lon, a.distNm + 2, { limit: 6 })
+    .filter((x) => x.ident !== a.ident && (comparable ? runwayTypes.has(x.type) : true)).length;
+  return `${a.name}${a.ident ? ` (${a.ident})` : ""}, ${a.distNm.toFixed(1)}nm` +
+    (peers ? ` (+${peers} as close)` : "");
 }
 
 module.exports = {

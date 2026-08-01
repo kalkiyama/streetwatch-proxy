@@ -11,6 +11,7 @@
 
 const { fetchAircraft, stats: adsbStats } = require("./adsb-proxy");
 const archive = require("./archive.js");
+const airfields = require("./airfields.js");
 
 // ICAO type designators for uncrewed platforms that often DON'T squawk category B6.
 // Prefix match on MQ-/RQ- series covers Reaper, Predator, Triton, Global Hawk, Shadow…
@@ -810,7 +811,17 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
   const drones = Array.from(seen.values())
     .filter((s) => s.lastSeen >= cutoff)
     .sort((a, b) => b.lastSeen - a.lastSeen)
-    .map(({ track, ...rest }) => ({ ...rest, trackPoints: track.length }));
+    .map(({ track, ...rest }) => ({
+      ...rest,
+      trackPoints: track.length,
+      // WHERE THE AIRCRAFT IS, not where the watcher is. `site` names the sweep point that found
+      // it and siteDistNm is often large — the first contact checked read "Larissa AB, 30nm",
+      // which tells a reader almost nothing about the aircraft's actual location. This resolves
+      // the contact's OWN position against the 85,758-record reference set.
+      // NOT the same claim as `site`: this is what is NEARBY, never what the aircraft is using.
+      // The UI must not present it as an operator or a destination.
+      nearestAirfield: airfields.describe(rest.lat, rest.lon),
+    }));
   const byKind = drones.reduce((m, d) => ((m[d.kind] = (m[d.kind] || 0) + 1), m), {});
   return {
     // Read the provider that ACTUALLY answered rather than naming one. With an upstream fallback
