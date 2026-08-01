@@ -60,7 +60,10 @@ const GAP_MIN     = Number(opt("gap-min", 240));   // minutes of silence that en
                                                    // sites are polled every ~2.5h, so a smaller value makes
                                                    // every poll look like a new arrival. At 25min a single
                                                    // PARKED aircraft produced 123 phantom events at one point.
-const LOW_FT      = Number(opt("low-ft", 3000));   // no longer used as a fallback; kept for --low-ft runs
+// LOW_FT (barometric, 3000ft) WAS the fallback wherever ground level could not be established.
+// Removed Aug 1: falling back to a LOOSER rule where we knew LESS made the tool measurably worse
+// — candidates 42 -> 61, validation 93% -> 92%. Endpoints with no usable ground level are now
+// DISCARDED, so nothing reads this. Found dead by eslint on its first run in this repo.
 const LOW_AGL_FT  = Number(opt("low-agl", 500));   // endpoint ceiling ABOVE FIELD — the real filter
 const GROUND_REF_NM = Number(opt("ground-ref-nm", 15));  // how far to look for a ground-elevation proxy
 const SLOW_KT     = Number(opt("slow-kt", 200));   // endpoint speed ceiling
@@ -324,7 +327,6 @@ function parseCsv(text) {
   console.log("═".repeat(78));
 
   const show = (c) => {
-    const k = c.known;
     console.log(
       `  ${c.lat.toFixed(4)},${c.lon.toFixed(4)}  ${String(c.icaos).padStart(2)}ac/${String(c.days).padStart(2)}d ` +
       `(${c.vanish}v/${c.emerge}e bal ${c.balance.toFixed(2)}) ${String(c.n).padStart(4)}ev ` +

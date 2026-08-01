@@ -278,7 +278,14 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
   const names = Object.keys(siteCoords);
   const lats = names.map((n) => siteCoords[n].lat);
   const lons = names.map((n) => siteCoords[n].lon);
-  const NEAR_NM = 25;
+  // 25 AND 100 ARE HARDCODED IN SIX FILTERS BELOW, and 25 appears again in another function here
+  // and once more in server.js as `nearRadiusNm: 25` — the value the CLIENT is told. Four places,
+  // one number, no single source. Change one and the API keeps reporting the old value.
+  // A constant was declared here and never read; eslint no-unused-vars found it on its FIRST RUN
+  // in this repo (Aug 1). It was briefly wired into ONE of the six filters, which made the block
+  // inconsistent — five literals and one interpolation reads worse than six literals. Removed.
+  // PROPERLY FIXING IT means parameterising all six plus server.js, in SQL that no test exercises.
+  // Worth doing deliberately, not at the end of a session.
 
   // Counts at three radii in ONE pass. The distance is computed once in a CTE and reused by
   // FILTER clauses, so switching radius in the UI needs no refetch — and the three numbers

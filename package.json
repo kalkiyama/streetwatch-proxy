@@ -4,7 +4,9 @@
   "description": "Combined ADS-B (aircraft) + AIS (ships) proxy for the StreetWatch app. Zero dependencies.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "lint": "eslint .",
+    "test": "eslint . && SWEEP_INTERVAL_MS=999999 node test-combined.js && node test-secure.js"
   },
   "engines": {
     "node": ">=20"
@@ -12,5 +14,9 @@
   "license": "MIT",
   "dependencies": {
     "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "globals": "^17.8.0"
   }
 }
