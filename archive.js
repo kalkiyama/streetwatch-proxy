@@ -95,6 +95,38 @@ async function init() {
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_icao_ts ON drone_tracks (icao, ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_ts ON drone_tracks (ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_site_ts ON drone_tracks (site, ts DESC)`);
+
+    // OPERATIONS — one row per EVENT, not per day. Summaries can be computed from events; events
+    // cannot be recovered from summaries, and the whole point is being able to say WHICH aircraft.
+    // `ev` is 'arrival' or 'departure'. Both are INFERENCES from where a track ends or begins,
+    // never observed landings — see operations.js for the observation-clock control.
+    // The unique key is (icao, site, ev, ts): the same airframe can arrive at the same site many
+    // times, but not twice at the same instant. That makes the nightly recompute an UPSERT rather
+    // than a delete-and-reinsert, so a failed run cannot leave a hole.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS drone_operations (
+        icao        TEXT        NOT NULL,
+        site        TEXT        NOT NULL,
+        ev          TEXT        NOT NULL,   -- arrival | departure
+        ts          TIMESTAMPTZ NOT NULL,
+        agl_ft      INTEGER,                -- height above field at the endpoint
+        callsign    TEXT,
+        type_code   TEXT,
+        descr       TEXT,
+        kind        TEXT,
+        PRIMARY KEY (icao, site, ev, ts)
+      )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS drone_ops_site_ts ON drone_operations (site, ts DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS drone_ops_ts ON drone_operations (ts DESC)`);
+    // When the nightly job last COMPLETED. Read at boot so a redeploy does not re-run it, and so a
+    // missed day is visible rather than silent.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS drone_ops_runs (
+        id      INTEGER PRIMARY KEY DEFAULT 1,
+        ran_at  TIMESTAMPTZ NOT NULL,
+        events  INTEGER,
+        CHECK (id = 1)
+      )`);
     // Rows written before the callsign padding fix hold literal "@@@@@@@@" — the ADS-B unset
     // marker, stored as if it were an identifier. New writes are cleaned at the proxy, but the
     // 90-day archive would keep surfacing the old ones in track and path views until they aged
@@ -793,10 +825,73 @@ async function multiStop(days = 7, minStops = 2, limit = 40, distNm = 10, altFt 
   };
 }
 
+// Read operations for a site. Returns null when the archive is disabled, [] when there is nothing.
+async function operations({ site = null, days = 7, limit = 200 } = {}) {
+  if (!ready) return null;
+  const d = Math.min(Math.max(Number(days) || 7, 1), RETAIN_DAYS);
+  const lim = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const params = [String(d), lim];
+  let siteSql = "";
+  if (site) { siteSql = "AND site = $3"; params.push(site); }
+  const { rows } = await pool.query(
+    `SELECT icao, site, ev, ts, agl_ft, callsign, type_code, descr, kind
+       FROM drone_operations
+      WHERE ts > now() - ($1 || ' days')::interval ${siteSql}
+      ORDER BY ts DESC
+      LIMIT $2`, params);
+  return rows;
+}
+
+// Summary per site, for the panel. Derived from the same events.
+async function operationsSummary({ site, days = 7 } = {}) {
+  if (!ready || !site) return null;
+  const d = Math.min(Math.max(Number(days) || 7, 1), RETAIN_DAYS);
+  const { rows } = await pool.query(
+    `SELECT count(*) FILTER (WHERE ev = 'arrival')::int   AS arrivals,
+            count(*) FILTER (WHERE ev = 'departure')::int AS departures,
+            count(DISTINCT icao)::int                     AS airframes
+       FROM drone_operations
+      WHERE site = $1 AND ts > now() - ($2 || ' days')::interval`, [site, String(d)]);
+  return rows[0] || { arrivals: 0, departures: 0, airframes: 0 };
+}
+
+async function writeOperations(events) {
+  if (!ready || !events.length) return 0;
+  let written = 0;
+  // Chunked: a single statement with thousands of value groups exceeds the parameter limit.
+  for (let i = 0; i < events.length; i += 200) {
+    const chunk = events.slice(i, i + 200);
+    const vals = [], params = [];
+    chunk.forEach((e, k) => {
+      const b = k * 9;
+      vals.push(`($${b+1}, $${b+2}, $${b+3}, $${b+4}, $${b+5}, $${b+6}, $${b+7}, $${b+8}, $${b+9})`);
+      params.push(e.icao, e.site, e.ev, e.ts, e.agl_ft, e.callsign, e.type_code, e.descr, e.kind);
+    });
+    // ON CONFLICT DO NOTHING: the recompute window overlaps what is already stored, so most rows
+    // on any given night are already there. An upsert makes the job idempotent — running it twice
+    // changes nothing, which is what makes a restart safe.
+    const r = await pool.query(
+      `INSERT INTO drone_operations (icao, site, ev, ts, agl_ft, callsign, type_code, descr, kind)
+       VALUES ${vals.join(", ")} ON CONFLICT DO NOTHING`, params);
+    written += r.rowCount || 0;
+  }
+  await pool.query(
+    `INSERT INTO drone_ops_runs (id, ran_at, events) VALUES (1, now(), $1)
+     ON CONFLICT (id) DO UPDATE SET ran_at = now(), events = $1`, [written]);
+  return written;
+}
+
+async function opsLastRun() {
+  if (!ready) return null;
+  const { rows } = await pool.query(`SELECT ran_at, events FROM drone_ops_runs WHERE id = 1`);
+  return rows[0] || null;
+}
+
 module.exports = {
   ageHours,
   multiStop,
   coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS,
+  operations, operationsSummary, writeOperations, opsLastRun,
   // Exported so server.js reports the radius it ACTUALLY queried instead of its own copy of the
   // same literal. Change the query and the API would otherwise keep telling clients the old one.
   SWEEP_NM, REGION_NM, NEAR_NM, TERMINAL_NM, TERMINAL_FT, OVERFLIGHT_FT };

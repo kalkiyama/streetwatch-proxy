@@ -170,6 +170,30 @@ async function handler(req, res) {
     return send(res, 404, { error: "unknown_contact" }, origin);
   }
 
+  if (p === "/api/drones/operations") {
+    const u = new URL(req.url, "http://localhost");
+    const site = u.searchParams.get("site");
+    const days = u.searchParams.get("days");
+    const rows = await archive.operations({ site, days, limit: u.searchParams.get("limit") });
+    if (!rows) return send(res, 503, { error: "archive_disabled", detail: "No archive configured on this instance." }, origin);
+    const summary = site ? await archive.operationsSummary({ site, days }) : null;
+    const run = await archive.opsLastRun();
+    return send(res, 200, {
+      source: "StreetWatch archive",
+      // SCOPE, in the payload, because the number is smaller than a reader expects and the reason
+      // matters: local circuit training never leaves the radius, so those flights never end a
+      // track here and are not counted. Whiting Field shows ~11 a week against hundreds of real
+      // daily movements. Unlabelled, that reads as a broken tool rather than a different question.
+      measures: "arrivals from and departures to elsewhere — not total movements",
+      basis: "inferred from where tracks end and begin, never an observed landing",
+      lastComputed: run ? run.ran_at : null,
+      site: site || null,
+      summary,
+      count: rows.length,
+      operations: rows,
+    }, origin);
+  }
+
   if (p === "/api/drones/history") {
     const u = new URL(req.url, "http://localhost");
     const kind = u.searchParams.get("kind");
@@ -477,7 +501,7 @@ async function handler(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/webcams", "/health", "/metrics"] }, origin);
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/webcams", "/health", "/metrics"] }, origin);
 }
 
 function createServer() { return http.createServer(handler); }
