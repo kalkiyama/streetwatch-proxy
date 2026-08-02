@@ -445,8 +445,10 @@ async function handler(req, res) {
       // the field maximum never reached the client and HeatMap fell back to the 250nm max —
       // scaling the "at the field" colour by a number ~65x too large and rendering every site
       // pale. Fixed Jul 31. Do not reintroduce a second declaration of any of these keys.
-      sweepRadiusNm: 250,
-      nearRadiusNm: 25,
+      // FROM archive.js, not typed again here. These were separate literals, so the radius the
+      // client was TOLD could drift from the radius the query actually used.
+      sweepRadiusNm: archive.SWEEP_NM,
+      nearRadiusNm: archive.NEAR_NM,
       sites: out.map((r) => ({ ...r, intensity: Number((r.contacts / max).toFixed(3)) })),
     }, origin);
   }
