@@ -177,6 +177,9 @@ async function handler(req, res) {
       days: u.searchParams.get("days"),
       kind: kind === "uav" || kind === "military" ? kind : null,
       limit: u.searchParams.get("limit"),
+      // Search by aircraft identity — ICAO hex or callsign. The app's search box has only ever
+      // searched the FEED CATALOG, so a callsign from the drone list matched nothing.
+      q: u.searchParams.get("q"),
     });
     if (!rows) return send(res, 503, { error: "archive_disabled", detail: "No archive configured on this instance." }, origin);
     return send(res, 200, { source: "StreetWatch archive", retainDays: archive.RETAIN_DAYS, count: rows.length, contacts: rows }, origin);
