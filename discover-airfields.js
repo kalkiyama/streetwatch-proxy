@@ -172,12 +172,19 @@ function parseCsv(text) {
   if (!process.env.DATABASE_URL) { console.error("DATABASE_URL not set"); process.exit(1); }
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-  // Last observation per site — the observation clock. A disappearance only counts if the site
-  // kept recording after it.
+  // THE OBSERVATION CLOCK, BOTH ENDS. A disappearance only counts if the site kept recording
+  // AFTER it; an appearance only counts if the site was already recording BEFORE it.
+  // The second half did not exist. The comment beside the emerge test claimed it did — "only if
+  // the site was already recording before it showed up" — and the code counted every low, slow
+  // first row unconditionally. So an "emerge" fired whenever the SWEEP STARTED WATCHING a site,
+  // which is not a departure, and departures were systematically over-counted against arrivals.
+  // Two numbers measured differently. A panel reading "6 arrivals · 4 departures" would have been
+  // comparing a controlled figure with an uncontrolled one.
   const { rows: clock } = await pool.query(
-    `SELECT site, max(ts) AS last_ts FROM drone_tracks
+    `SELECT site, min(ts) AS first_ts, max(ts) AS last_ts FROM drone_tracks
       WHERE ts > now() - ($1||' days')::interval GROUP BY site`, [String(DAYS)]);
   const siteLast = new Map(clock.map((r) => [r.site, new Date(r.last_ts).getTime()]));
+  const siteFirst = new Map(clock.map((r) => [r.site, new Date(r.first_ts).getTime()]));
 
   const { rows } = await pool.query(
     `SELECT icao, ts, lat, lon, alt_ft, speed_kt, site, country, kind
@@ -237,8 +244,11 @@ function parseCsv(text) {
     if (lowSlow(last) && lastSeen && lastSeen - new Date(last.ts).getTime() > OBS_MS)
       events.push({ ...last, ev: "vanish" });
 
-    // APPEARANCE — only if the site was already recording before it showed up.
-    if (lowSlow(first)) events.push({ ...first, ev: "emerge" });
+    // APPEARANCE — and NOW it really is only if the site was already recording before it showed
+    // up. Same clock as the disappearance test above, run backwards.
+    const firstSeen = siteFirst.get(first.site);
+    if (lowSlow(first) && firstSeen && new Date(first.ts).getTime() - firstSeen > OBS_MS)
+      events.push({ ...first, ev: "emerge" });
     seg = [];
   };
   let prev = null;
