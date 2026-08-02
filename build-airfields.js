@@ -40,6 +40,9 @@ const fs = require("fs");
 const zlib = require("zlib");
 
 const URL = "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv";
+// Runway length and surface live in a SEPARATE file, keyed by airport ident. Same source,
+// same CC0 licence. 48,144 records, 46,855 open and carrying a length.
+const RUNWAYS_URL = "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/runways.csv";
 const OUT = "airfields.json.gz";
 
 // packed type codes — kept stable, the runtime module maps them back
@@ -71,22 +74,61 @@ function parseCsv(text) {
 }
 
 (async () => {
-  process.stdout.write("downloading OurAirports (~12 MB) ... ");
+  process.stdout.write("downloading OurAirports airports (~12 MB) ... ");
   const csv = await get(URL);
   console.log("done");
+
+  process.stdout.write("downloading OurAirports runways (~4 MB) ... ");
+  const rwCsv = await get(RUNWAYS_URL);
+  console.log("done");
+
+  // LONGEST runway per airfield. An airport with a 12,000ft main and a 3,000ft crosswind is
+  // described by the 12,000 — that is the one that decides what can land there.
+  // Closed runways are skipped: a closed strip at an open airport is not an option.
+  // Surface codes are normalised. The source mixes ASP/ASPH, TURF/GRS/GRAS/GRE, CON/CONC, and
+  // passing them through raw would look precise while meaning little. Five buckets a reader can
+  // act on, and NULL for anything unrecognised rather than a forced guess.
+  const SURFACE = [
+    [/^(ASP|ASPH|CON|CONC|PEM|BIT|TAR|PAVED)/i, "paved"],
+    [/^(TURF|GRS|GRAS|GRE|GRASS|SOD)/i,          "grass"],
+    [/^(GVL|GRVL|GRAVEL|COR|MAC|LAT)/i,          "gravel"],
+    [/^(DIRT|GRD|EARTH|CLAY|SAND|SND|SOIL)/i,    "dirt"],
+    [/^(WATER|WTR)/i,                            "water"],
+  ];
+  const longest = new Map();
+  for (const r of parseCsv(rwCsv)) {
+    if (r.closed === "1" || !r.length_ft) continue;
+    const len = Number(r.length_ft);
+    if (!Number.isFinite(len) || len <= 0) continue;
+    const prev = longest.get(r.airport_ident);
+    if (prev && prev.len >= len) continue;
+    const raw = (r.surface || "").trim();
+    const surf = (SURFACE.find(([re]) => re.test(raw)) || [])[1] || null;
+    longest.set(r.airport_ident, { len: Math.round(len), surf });
+  }
+  console.log(`runways   : longest recorded for ${longest.size.toLocaleString()} airfields`);
 
   const all = parseCsv(csv).filter((a) =>
     a.latitude_deg && a.longitude_deg && a.type !== "balloonport");
 
-  const out = all.map((a) => [
-    a.name,
-    a.ident || "",
-    TYPE[a.type] ?? 9,
-    Math.round(+a.latitude_deg * 1e5) / 1e5,
-    Math.round(+a.longitude_deg * 1e5) / 1e5,
-    a.elevation_ft === "" ? null : Math.round(+a.elevation_ft),
-    a.iso_country || "",
-  ]);
+  // Index 7 is runway length in feet, 8 is the normalised surface. NULL where the source has no
+  // record — which is 44% of small strips and 68% of heliports, i.e. exactly the fields where the
+  // answer matters most. Absent must read as UNKNOWN, never as none.
+  const SURF_CODE = { paved: 1, grass: 2, gravel: 3, dirt: 4, water: 5 };
+  const out = all.map((a) => {
+    const rw = longest.get(a.ident) || null;
+    return [
+      a.name,
+      a.ident || "",
+      TYPE[a.type] ?? 9,
+      Math.round(+a.latitude_deg * 1e5) / 1e5,
+      Math.round(+a.longitude_deg * 1e5) / 1e5,
+      a.elevation_ft === "" ? null : Math.round(+a.elevation_ft),
+      a.iso_country || "",
+      rw ? rw.len : null,
+      rw && rw.surf ? SURF_CODE[rw.surf] : null,
+    ];
+  });
 
   const gz = zlib.gzipSync(Buffer.from(JSON.stringify(out)), { level: 9 });
   fs.writeFileSync(OUT, gz);
@@ -100,4 +142,6 @@ function parseCsv(text) {
   Object.entries(byType).sort((a, b) => b[1] - a[1])
     .forEach(([k, v]) => console.log(`  ${String(v).padStart(6)}  ${k}`));
   console.log(`\nelevation present on ${withEl.toLocaleString()} (${(100 * withEl / out.length).toFixed(0)}%)`);
+  const withRw = out.filter((r) => r[7] !== null).length;
+  console.log(`runway length on ${withRw.toLocaleString()} (${(100 * withRw / out.length).toFixed(0)}%) — UNEVEN: ~100% of large, ~94% of medium, ~56% of small strips, ~32% of heliports`);
 })().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });
