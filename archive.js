@@ -209,13 +209,30 @@ async function prune() {
 // ---- read-only queries (public endpoint) ----
 
 // Distinct contacts seen in a window, newest first.
-async function history({ days = 7, kind = null, limit = 200 } = {}) {
+// `q` searches the ARCHIVE by aircraft identity — ICAO hex, callsign or registration. The app's
+// search box has always searched the FEED CATALOG (7,448 named places), so typing a callsign you
+// just saw in the drone list returned nothing at all. The data was already here and unreachable.
+// SCOPE, and the caller must say it out loud: this archive holds MILITARY AND UAV contacts only.
+// A civil flight number will never match, and an empty result must not read as "no such flight".
+async function history({ days = 7, kind = null, limit = 200, q = null } = {}) {
   if (!ready) return null;
   const d = Math.min(Math.max(Number(days) || 7, 1), RETAIN_DAYS);
   const lim = Math.min(Math.max(Number(limit) || 200, 1), 500);
   const params = [String(d), lim];
   let kindSql = "";
   if (kind === "uav" || kind === "military") { kindSql = "AND kind = $3"; params.push(kind); }
+  // Bound parameter, never interpolated. ILIKE with a trailing % so "VADER" finds VADER21 and
+  // VADER22; an exact hex still matches exactly. The 32-char cap stops a pathological pattern.
+  let qSql = "";
+  const term = typeof q === "string" ? q.trim().slice(0, 32) : "";
+  if (term) {
+    params.push(term.replace(/[%_\\]/g, "\\$&") + "%");
+    const n = params.length;
+    // icao and callsign ONLY. `registration` exists on the LIVE contact shape but is NOT a
+    // column in drone_tracks — the query would have thrown on the first search. node --check
+    // passes happily on SQL referencing a column that does not exist; only the schema says so.
+    qSql = `AND (icao ILIKE $${n} OR callsign ILIKE $${n})`;
+  }
   const { rows } = await pool.query(
     `SELECT icao, kind, confidence,
             max(callsign) AS callsign, max(type_code) AS type_code, max(descr) AS descr,
@@ -224,7 +241,7 @@ async function history({ days = 7, kind = null, limit = 200 } = {}) {
             (array_agg(site ORDER BY ts DESC))[1] AS last_site,
             (array_agg(country ORDER BY ts DESC))[1] AS last_country
        FROM drone_tracks
-      WHERE ts > now() - ($1 || ' days')::interval ${kindSql}
+      WHERE ts > now() - ($1 || ' days')::interval ${kindSql} ${qSql}
       GROUP BY icao, kind, confidence
       ORDER BY max(ts) DESC
       LIMIT $2`,
