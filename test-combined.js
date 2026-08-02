@@ -75,11 +75,29 @@ const server = createServer().listen(0, async () => {
         }
       assert.strictEqual(collisions.length, 0,
         `named sites within 1nm of each other:\n  ${collisions.join("\n  ")}`);
+      // NAMED vs DEEP CELLS. The assertion above compares named sites to EACH OTHER only, which is
+      // why 26 grid cells sat within 15nm of a named site for a week without anything noticing —
+      // one of them, Diego Garcia, at 0.0nm, the SAME POINT twice. Both poll a 250nm radius, so
+      // the cell adds nothing and splits attribution between two centres for the same traffic.
+      // drone-sweep.js now filters those cells out at generation. This asserts the filter WORKED,
+      // so the gap cannot reopen when a named site is added near an existing cell.
+      // The lesson is about the FIRST assertion: it was written to catch duplicate sites and only
+      // compared the category it happened to be thinking about.
+      const deep = SITES.filter((x) => x[1] === "Deep sweep");
+      const shadowed = [];
+      for (const c of deep)
+        for (const n of named) {
+          const d = nmBetween(c[2], c[3], n[2], n[3]);
+          if (d <= 15) { shadowed.push(`${c[0]} <-> ${n[0]} (${d.toFixed(1)}nm)`); break; }
+        }
+      assert.strictEqual(shadowed.length, 0,
+        `deep cells a named site already covers (drop them at generation):\n  ${shadowed.join("\n  ")}`);
+
       const dupNames = {};
       named.forEach((s) => { dupNames[s[0]] = (dupNames[s[0]] || 0) + 1; });
       const dupes = Object.keys(dupNames).filter((k) => dupNames[k] > 1);
       assert.strictEqual(dupes.length, 0, `duplicate site names: ${dupes.join(", ")}`);
-      console.log(`PASS  site list -> ${named.length} named sites, no pair within 1nm, no duplicate names`);
+      console.log(`PASS  site list -> ${named.length} named + ${SITES.length - named.length} deep, no pair within 1nm, no duplicate names, no shadowed cells`);
     }
     r = await fetch(`${base}/nope`); assert.strictEqual(r.status,404);
     console.log("PASS  unknown route -> 404 with route hints");

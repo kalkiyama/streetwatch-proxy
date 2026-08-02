@@ -537,10 +537,26 @@ const DEEP_GRID = [
   [61.8,-166.07], [66.48,-162.68], [59.63,-151.09], [54.79,-167.58], [63.65,-164.97], [67.04,-159.15], [63.28,-155.91], [62.58,-160.08],
   [65.85,-155.03], [56.03,-132.72], [67.06,-166.48], [67.34,-145.41], [28.2,-177.38], [5.39,-62], [-42.45,-73.72],
 ];
-const DEEP_SITES = DEEP_GRID.map(([lat, lon]) => [
-  `Deep sweep ${Math.abs(lat).toFixed(1)}${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon).toFixed(1)}${lon >= 0 ? 'E' : 'W'}`,
-  'Deep sweep', lat, lon, true,
-]);
+// DROP ANY CELL A NAMED SITE ALREADY COVERS. 26 of the 799 sat within 15nm of one, and three
+// within 1.5nm — Diego Garcia had a cell at 0.0nm, the SAME POINT twice. Both poll a 250nm radius,
+// so the cell adds nothing and actively SPLITS ATTRIBUTION: contacts go to whichever centre is
+// marginally nearer, so the Mobile Bay cell showed 21 terminal contacts while Mobile/Brookley
+// beside it showed 7, for the same traffic.
+// It also produces a label that describes nothing. "Deep sweep 30.5N 88.1W" is a point in the
+// water of Mobile Bay; the named site next to it is a real airfield.
+// FILTERED AT GENERATION, not deleted by hand, so adding a named site tomorrow retires the
+// redundant cell near it automatically. The grid exists to find places the named list MISSES —
+// once the list covers a place, that cell has done its job.
+// The Jul 26 proximity assertion in test-combined.js only checks NAMED sites against each other,
+// which is why this went unseen: named-vs-deep was never compared.
+const DEEP_COVERED_NM = Number(process.env.SWEEP_DEEP_COVERED_NM || 15);
+const DEEP_SITES = DEEP_GRID
+  .filter(([lat, lon]) => !SITES.some((n) => n[1] !== 'Deep sweep' && distNm(lat, lon, n[2], n[3]) <= DEEP_COVERED_NM))
+  .map(([lat, lon]) => [
+    `Deep sweep ${Math.abs(lat).toFixed(1)}${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon).toFixed(1)}${lon >= 0 ? 'E' : 'W'}`,
+    'Deep sweep', lat, lon, true,
+  ]);
+console.log(`[sweep] deep grid: ${DEEP_SITES.length} cells (${DEEP_GRID.length - DEEP_SITES.length} dropped — a named site already covers them within ${DEEP_COVERED_NM}nm)`);
 const SWEEP_DEEP = process.env.SWEEP_DEEP !== '0';          // on unless disabled
 const DEEP_EVERY = Number(process.env.SWEEP_DEEP_EVERY || 45);
 const MAX_PASS = Number(process.env.SWEEP_MAX_PASS || 60);   // keeps hot refresh under ~15 min
