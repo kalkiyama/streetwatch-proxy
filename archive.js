@@ -25,6 +25,20 @@ const FLUSH_MS = Number(process.env.ARCHIVE_FLUSH_MS || 10 * 60 * 1000);  // flu
 const FLUSH_MAX = Number(process.env.ARCHIVE_FLUSH_MAX || 400);           // ...or when the buffer fills
 const URL = process.env.DATABASE_URL || "";
 
+// THE RADII, IN ONE PLACE. These numbers appear 21 times across archive.js and server.js — 25
+// eight times, 100 five, 10 seven, 250 twice — and server.js repeats `sweepRadiusNm: 250` and
+// `nearRadiusNm: 25` as its OWN literals, so the value the CLIENT is told is a separate copy from
+// the value the query uses. Change one and the API keeps reporting the old number.
+// Found by eslint no-unused-vars on its first run in this repo: a NEAR_NM constant was declared
+// and never read while the query beside it hardcoded the same 25. Rule 13 — a parameter nothing
+// can set is not a feature.
+const SWEEP_NM      = 250;    // the polling radius. A REGIONAL count, never a base count (DEF-001)
+const REGION_NM     = 100;
+const NEAR_NM       = 25;     // "local airspace"
+const TERMINAL_NM   = 10;     // paired with TERMINAL_FT — close AND low
+const TERMINAL_FT   = 4000;
+const OVERFLIGHT_FT = 25000;
+
 let pool = null;
 let ready = false;
 let writes = 0, writeErrors = 0, flushes = 0;
@@ -494,7 +508,7 @@ async function digestData({ days = 7, siteCoords = {} } = {}) {
   // base itself: 250nm of Eglin AFB contains Hurlburt, Tyndall, Pensacola NAS, Whiting, Maxwell
   // and Keesler. Reporting that as "Eglin AFB: 344" implies aircraft at Eglin and is false.
   // Compute a second, tight count within 25nm so both numbers can be shown honestly.
-  const NEAR_NM = 25;
+  // NEAR_NM comes from module scope now — this was a shadowing local copy of the same 25.
   await Promise.all(now.map(async (r) => {
     const c = siteCoords[r.site];
     if (!c) { r.nearContacts = null; return; }
@@ -765,4 +779,7 @@ async function multiStop(days = 7, minStops = 2, limit = 40, distNm = 10, altFt 
 module.exports = {
   ageHours,
   multiStop,
-  coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS };
+  coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS,
+  // Exported so server.js reports the radius it ACTUALLY queried instead of its own copy of the
+  // same literal. Change the query and the API would otherwise keep telling clients the old one.
+  SWEEP_NM, REGION_NM, NEAR_NM, TERMINAL_NM, TERMINAL_FT, OVERFLIGHT_FT };
