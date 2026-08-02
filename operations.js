@@ -172,9 +172,21 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
     if (ops.length > 30) console.log(`  ... and ${ops.length - 30} more`);
   }
 
-  console.log(`\nINFERRED FROM TRACK ENDPOINTS, not observed landings. An arrival is a track that ENDS`);
-  console.log(`here while this site kept recording other aircraft; a departure is one that BEGINS here`);
-  console.log(`after the site was already recording. Aircraft also vanish below line-of-sight, and low`);
-  console.log(`altitude is where reception fails — so this UNDERCOUNTS. ${noGround.toLocaleString()} endpoints were discarded`);
-  console.log(`because ground level could not be established, which is honest rather than guessed.`);
+  // WHAT THIS NUMBER IS NOT. Whiting Field shows ~11 arrivals a week; its real movements run to
+  // hundreds a DAY. The gap is not an error — it is what the method measures. Circuit training
+  // never leaves the 10nm radius and never climbs out of coverage, so those tracks never END, and
+  // an aircraft that never ends a track never produces an arrival.
+  // So this counts TRAFFIC BETWEEN PLACES, not activity at a place. Left unlabelled, a reader
+  // compares 11 against a published movement count, finds it 50x short, and concludes the tool is
+  // broken — when it is answering a different and arguably more useful question.
+  console.log(`\nARRIVALS FROM AND DEPARTURES TO ELSEWHERE — not total movements.`);
+  console.log(`Local circuit training never leaves the ${NEAR_NM}nm radius, so those flights never end a`);
+  console.log(`track here and are NOT counted. A busy training field will show a small number.`);
+  console.log(``);
+  console.log(`INFERRED FROM TRACK ENDPOINTS, never an observed landing. An arrival is a track that`);
+  console.log(`ENDS here while this site kept recording other aircraft; a departure is one that BEGINS`);
+  console.log(`here after the site was already recording. Aircraft also vanish below line-of-sight, and`);
+  console.log(`low altitude is exactly where reception fails — so this UNDERCOUNTS in both directions.`);
+  console.log(`${noGround.toLocaleString()} endpoint(s) discarded: ground level could not be established, so height above`);
+  console.log(`field was unknown. Discarded rather than guessed.`);
 })().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });
