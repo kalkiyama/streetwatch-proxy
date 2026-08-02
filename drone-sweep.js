@@ -800,7 +800,19 @@ function start() {
 //
 // This only catches ambiguity between sites we ALREADY WATCH. Untracked airfields inside a radius
 // are invisible to it and remain the larger problem — see the airfield-discovery spec.
+// COUPLED TO DEEP_COVERED_NM ABOVE, and the coupling is why this can safely ignore deep cells.
+// NEIGHBOURS below compares NAMED SITES ONLY. That was a real blind spot — Mobile/Brookley sat
+// 5.8nm from a grid cell and neither warned, while Eglin/Hurlburt at 9.3nm both did. It is now
+// UNREACHABLE rather than fixed: DEEP_COVERED_NM drops any cell within 15nm of a named site at
+// generation, and this warns below 15nm, so a cell can never be close enough to need a warning
+// this detector cannot produce.
+// IF EITHER NUMBER CHANGES, THE GAP REOPENS. Raise this above DEEP_COVERED_NM and named-vs-cell
+// pairs become possible again with nothing to catch them. Fixing it properly would mean comparing
+// all 1,081 sites pairwise — 1.17 MILLION comparisons at startup against the current 95,000 — on a
+// service that cold-starts on a free tier. Not worth paying to prove something that cannot happen.
 const AMBIGUOUS_NM = Number(process.env.AMBIGUOUS_SITE_NM || 15);
+if (AMBIGUOUS_NM > DEEP_COVERED_NM)
+  console.warn(`[sweep] AMBIGUOUS_NM ${AMBIGUOUS_NM} > DEEP_COVERED_NM ${DEEP_COVERED_NM} — deep cells can now sit inside the ambiguity radius and NEIGHBOURS will not warn about them`);
 
 const NEIGHBOURS = (() => {
   const named = SITES.filter((x) => x[1] !== 'Deep sweep');
