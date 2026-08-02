@@ -1,8 +1,9 @@
 # StreetWatch Proxy
 
 The backend for **[streetwatch.earth](https://streetwatch.earth)** — a zero-dependency Node
-service that serves live aircraft and vessel positions, runs a rotating sweep over 1,106
-airspaces watching for military and UAV activity, archives what it sees for 90 days, and
+service that serves live aircraft and vessel positions, runs a tiered rotating sweep over 1,081
+airspaces — active sites every ~30 minutes, the global grid every few days — watching for military
+and UAV activity, archives what it sees for 90 days, and
 exposes that history as queryable analysis.
 
 Frontend lives in a separate repo. This service is usable on its own.
