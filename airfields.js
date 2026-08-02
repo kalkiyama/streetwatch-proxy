@@ -47,7 +47,7 @@ const ROUGH_FT = Number(process.env.AIRFIELD_ROUGH_FT || 500);   // terrain-disa
 const GROUND_NM = Number(process.env.AIRFIELD_GROUND_NM || 15);  // how far to look for ground level
 
 let N = 0;
-let LAT, LON, ELEV, TYPE, HASEL;
+let LAT, LON, ELEV, TYPE, HASEL, RWFT, SURF;
 let NAMES = [], IDENTS = [], COUNTRY = [];
 let grid = null;          // "latCell|lonCell" -> Int32Array of indices
 let ready = false;
@@ -86,6 +86,11 @@ function load(file) {
 
   N = rows.length;
   LAT = new Float32Array(N); LON = new Float32Array(N);
+  // Runway length in feet and a surface code. Int16 tops out at 32,767ft; the longest runway
+  // in the world is ~18,000ft, so the margin is wide. 0 means NO RECORD, which is 53% of
+  // airfields and — worse — 44% of small strips and 68% of heliports, the very fields where
+  // "can I land here" matters most. Absent must read as UNKNOWN, never as none.
+  RWFT = new Int16Array(N); SURF = new Uint8Array(N);
   ELEV = new Int16Array(N);  TYPE = new Uint8Array(N); HASEL = new Uint8Array(N);
   NAMES = new Array(N); IDENTS = new Array(N); COUNTRY = new Array(N);
 
@@ -99,6 +104,8 @@ function load(file) {
     if (r[5] === null) { ELEV[i] = 0; HASEL[i] = 0; }
     else { ELEV[i] = Math.max(-2000, Math.min(30000, r[5])); HASEL[i] = 1; }
     COUNTRY[i] = r[6];
+    RWFT[i] = r[7] == null ? 0 : Math.max(0, Math.min(32000, r[7]));
+    SURF[i] = r[8] == null ? 0 : r[8];
 
     const key = `${Math.floor(r[3])}|${Math.floor(r[4])}`;
     let b = buckets.get(key);
@@ -130,6 +137,8 @@ function record(i, distNm) {
     name: NAMES[i], ident: IDENTS[i], type: TYPE_NAME[TYPE[i]] || "unknown",
     lat: LAT[i], lon: LON[i],
     elevFt: HASEL[i] ? ELEV[i] : null,
+    runwayFt: RWFT[i] || null,
+    surface: ["", "paved", "grass", "gravel", "dirt", "water"][SURF[i]] || null,
     country: COUNTRY[i],
     distNm: Math.round(distNm * 100) / 100,
     closed: TYPE[i] === CLOSED,
@@ -249,7 +258,34 @@ function describe(lat, lon, maxNm = 25, runwayNm = 12) {
   const comparable = runwayTypes.has(a.type);
   const peers = within(lat, lon, a.distNm + 2, { limit: 6 })
     .filter((x) => x.ident !== a.ident && (comparable ? runwayTypes.has(x.type) : true)).length;
-  return `${a.name}${a.ident ? ` (${a.ident})` : ""}, ${a.distNm.toFixed(1)}nm` +
+  // SAY WHAT KIND OF FIELD IT IS, and always take the NEAREST one.
+  // "Watson Farm Airport (49FD), 8.9nm" reads as an airport; it is a private strip. The obvious fix
+  // was to prefer a more significant field within some distance budget — REJECTED. This function
+  // has already guessed wrong three times at what a reader wants (nearest-of-any-type gave a
+  // seaplane heliport; runway-only silently excluded 1,274 seaplane bases; the peer count needed
+  // two attempts to stop counting oil helipads), and a significance threshold would be the fourth
+  // guess, needing tuning against cases nobody has seen.
+  // And the nearest field is the RIGHT answer for the use the user named: somewhere to put an
+  // aircraft down. A rule that prefers a bigger airport further away would hide the closest option
+  // — exactly backwards for a diversion. The type is the missing INFORMATION, not the missing
+  // CHOICE: say it and let the reader weigh it.
+  const KIND = {
+    large_airport: "major", medium_airport: "regional", small_airport: "small strip",
+    seaplane_base: "seaplane", heliport: "helipad",
+  };
+  const kind = KIND[a.type] || null;
+  // RUNWAY LENGTH AND SURFACE, when the source has them. This is the second half of the diversion
+  // question: a 2,550ft GRASS strip and a 12,894ft PAVED runway are both "small_airport" and
+  // "large_airport" respectively, but the type alone does not tell you what can put down there.
+  // OMITTED ENTIRELY when there is no record — 53% of airfields, and 44% of small strips, which
+  // are precisely the fields where the answer matters most. Saying nothing means UNKNOWN. It must
+  // never be read as "no runway", so no placeholder, no dash, no "unknown" text: the clause is
+  // simply not there.
+  const rw = a.runwayFt
+    ? `${a.runwayFt.toLocaleString()}ft${a.surface ? ` ${a.surface}` : ""}`
+    : null;
+  const tag = [a.ident || null, kind, rw].filter(Boolean).join(", ");
+  return `${a.name}${tag ? ` (${tag})` : ""}, ${a.distNm.toFixed(1)}nm` +
     (peers ? ` (+${peers} as close)` : "");
 }
 
