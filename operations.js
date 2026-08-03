@@ -51,19 +51,24 @@ const SLOW_KT    = Number(opt("slow-kt", 200));
 const GAP_MIN    = Number(opt("gap-min", 240));   // silence that ends a segment; also the clock
 const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this close to the site
 
-(async () => {
+// Exported so the nightly job and the CLI share ONE implementation of the endpoint detection.
+// Two copies would drift — the heat drawing in WorldMap and HeatMap did exactly that today.
+async function compute(opts = {}) {
+  const days = opts.days != null ? Number(opts.days) : DAYS;
+  const site = opts.site !== undefined ? opts.site : SITE;
+  const quiet = !!opts.quiet;
   if (!process.env.DATABASE_URL) { console.error("DATABASE_URL not set"); process.exit(1); }
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
   // The observation clock: earliest and latest row per site.
   const { rows: clock } = await pool.query(
     `SELECT site, min(ts) AS first_ts, max(ts) AS last_ts FROM drone_tracks
-      WHERE ts > now() - ($1||' days')::interval GROUP BY site`, [String(DAYS)]);
+      WHERE ts > now() - ($1||' days')::interval GROUP BY site`, [String(days)]);
   const siteFirst = new Map(clock.map((r) => [r.site, new Date(r.first_ts).getTime()]));
   const siteLast  = new Map(clock.map((r) => [r.site, new Date(r.last_ts).getTime()]));
 
-  const where = SITE ? "AND site = $2" : "";
-  const params = SITE ? [String(DAYS), SITE] : [String(DAYS)];
+  const where = site ? "AND site = $2" : "";
+  const params = site ? [String(days), site] : [String(days)];
   const { rows } = await pool.query(
     `SELECT icao, ts, lat, lon, alt_ft, speed_kt, callsign, type_code, descr, site, kind, agl_ft
        FROM drone_tracks
@@ -72,7 +77,7 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
   await pool.end();
 
   if (!rows.length) {
-    console.log(SITE ? `no rows within ${NEAR_NM}nm of "${SITE}" in ${DAYS} days` : "no rows");
+    console.log(site ? `no rows within ${NEAR_NM}nm of "${site}" in ${days} days` : "no rows");
     return;
   }
 
@@ -102,7 +107,7 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
       const altRange = b.al.length ? Math.max(...b.al) - Math.min(...b.al) : 0;
       if (spreadNm < 0.05 && altRange === 0) still.add(icao);
     }
-    if (still.size) console.log(`excluded ${still.size} stationary emitter(s): ${[...still].join(", ")}`);
+    if (still.size && !quiet) console.log(`excluded ${still.size} stationary emitter(s): ${[...still].join(", ")}`);
   }
 
   const GAP_MS = GAP_MIN * 60000, OBS_MS = GAP_MS;
@@ -142,7 +147,8 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
   }
   flush();
 
-  if (TOP) {
+  if (quiet) { /* the nightly job wants events returned, not a report printed */ }
+  else if (TOP) {
     const bySite = new Map();
     for (const o of ops) {
       const b = bySite.get(o.site) || { arr: 0, dep: 0, frames: new Set() };
@@ -153,7 +159,7 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
     const list = [...bySite.entries()]
       .map(([site, b]) => ({ site, ...b, frames: b.frames.size, total: b.arr + b.dep }))
       .sort((a, b) => b.total - a.total).slice(0, TOP);
-    console.log(`OPERATIONS — last ${DAYS} days, endpoints within ${NEAR_NM}nm and below ${LOW_AGL_FT}ft above field\n`);
+    console.log(`OPERATIONS — last ${days} days, endpoints within ${NEAR_NM}nm and below ${LOW_AGL_FT}ft above field\n`);
     console.log("site                            arrivals  departures  airframes");
     list.forEach((x) => console.log(
       `  ${x.site.slice(0, 28).padEnd(28)} ${String(x.arr).padStart(8)} ${String(x.dep).padStart(11)} ${String(x.frames).padStart(10)}`));
@@ -161,7 +167,7 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
     const arr = ops.filter((o) => o.ev === "arrival");
     const dep = ops.filter((o) => o.ev === "departure");
     const frames = new Set(ops.map((o) => o.icao));
-    console.log(`\n${SITE} — last ${DAYS} days`);
+    console.log(`\n${site} — last ${days} days`);
     const near = airfields.describe(rows[0].lat, rows[0].lon);
     if (near) console.log(`near ${near}`);
     console.log(`\n${arr.length} arrival${arr.length === 1 ? "" : "s"} · ${dep.length} departure${dep.length === 1 ? "" : "s"} · ${frames.size} distinct airframe${frames.size === 1 ? "" : "s"}\n`);
@@ -179,6 +185,7 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
   // So this counts TRAFFIC BETWEEN PLACES, not activity at a place. Left unlabelled, a reader
   // compares 11 against a published movement count, finds it 50x short, and concludes the tool is
   // broken — when it is answering a different and arguably more useful question.
+if (!quiet) {
   console.log(`\nARRIVALS FROM AND DEPARTURES TO ELSEWHERE — not total movements.`);
   console.log(`Local circuit training never leaves the ${NEAR_NM}nm radius, so those flights never end a`);
   console.log(`track here and are NOT counted. A busy training field will show a small number.`);
@@ -189,4 +196,14 @@ const NEAR_NM    = Number(opt("near-nm", 10));    // an endpoint must be this cl
   console.log(`low altitude is exactly where reception fails — so this UNDERCOUNTS in both directions.`);
   console.log(`${noGround.toLocaleString()} endpoint(s) discarded: ground level could not be established, so height above`);
   console.log(`field was unknown. Discarded rather than guessed.`);
-})().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });
+  }
+  return ops;
+}
+
+module.exports = { compute };
+
+// CLI only when run directly. `require("./operations.js")` from the proxy gets the function
+// without executing any of this.
+if (require.main === module) {
+  compute().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });
+}
