@@ -83,6 +83,7 @@ async function init() {
         country     TEXT,
         pos_method  TEXT,      -- ADS-B | ADS-R | TIS-B | MLAT | ADS-C | Mode S
         pos_computed BOOLEAN,  -- true when the position was NOT self-reported
+        on_ground   BOOLEAN,   -- the aircraft SAID it was on the ground (ADS-B alt_baro "ground")
         agl_ft      INTEGER    -- height above field. NULL = ground level UNKNOWN, not zero.
                                -- Filtering on this WITHOUT stating a null policy silently drops
                                -- ~40% of rows, which is the site_dist_nm defect (PP-12) repeated.
@@ -92,6 +93,21 @@ async function init() {
     await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS pos_method TEXT`);
     await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS pos_computed BOOLEAN`);
     await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS agl_ft INTEGER`);
+    await pool.query(`ALTER TABLE drone_tracks ADD COLUMN IF NOT EXISTS on_ground BOOLEAN`);
+    // THE UPSTREAM SAID "ground" AND WE STORED ZERO FEET. adsb-proxy.js line 148 computes
+    // `onGround = a.alt_baro === "ground"` — the aircraft declares it — and line 160 then writes
+    // `altFt: onGround ? 0 : ...`. The FACT was known and flattened into a NUMBER that reads as an
+    // altitude. 9,915 rows across 2,241 airframes, 6,287 of them under 40kt: aircraft taxiing and
+    // parked, recorded as flying at zero feet.
+    // The damage is agl_ft: at La Aurora International (Guatemala City, elevation 4,952ft) a parked
+    // aircraft computed to -4,952ft above field. At a sea-level field it computes to 0 and looks
+    // fine, which is why this survived. Verified against FlightAware: FAG630 was genuinely at
+    // La Aurora that morning.
+    // Same treatment as the "@@@@@@@@" callsigns cleaned above — a placeholder stored as if it
+    // were a measurement — except the fact is WORTH KEEPING, so it moves to its own column rather
+    // than being discarded. Idempotent: after the first run this matches nothing.
+    await pool.query(`UPDATE drone_tracks SET on_ground = true, alt_ft = NULL, agl_ft = NULL
+                       WHERE alt_ft = 0 AND on_ground IS DISTINCT FROM true`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_icao_ts ON drone_tracks (icao, ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_ts ON drone_tracks (ts DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS drone_tracks_site_ts ON drone_tracks (site, ts DESC)`);
@@ -158,7 +174,7 @@ function record(c) {
   if (c.kind !== "uav" && c.kind !== "military") return;   // scope guard
   buffer.push([
     c.id, c.lastSeen || Date.now(), c.lat, c.lon,
-    Number.isFinite(c.altFt) ? Math.round(c.altFt) : null,
+    (!c.onGround && Number.isFinite(c.altFt)) ? Math.round(c.altFt) : null,   // 0 means GROUND, not zero feet
     Number.isFinite(c.groundSpeedKt) ? Math.round(c.groundSpeedKt) : null,
     Number.isFinite(c.headingDeg) ? c.headingDeg : null,
     c.kind, c.confidence || null, c.callsign || null, c.typeCode || null,
@@ -173,7 +189,10 @@ function record(c) {
     // say what it does with nulls — see the schema comment. Roughly 40% of rows will be null.
     // The figure is PRESSURE altitude minus a proxy ground level, so it carries up to ~800ft of
     // error from local QNH alone. Better than a sea-level ceiling; not precision.
-    Number.isFinite(c.altFt) ? airfields.heightAboveField(c.lat, c.lon, Math.round(c.altFt)) : null,
+    // altFt is 0 when the aircraft said "ground", so a height above field computed from it would
+    // be minus the field elevation. Skip it: on_ground carries the fact instead.
+    (!c.onGround && Number.isFinite(c.altFt)) ? airfields.heightAboveField(c.lat, c.lon, Math.round(c.altFt)) : null,
+    typeof c.onGround === "boolean" ? c.onGround : null,
   ]);
   if (buffer.length >= FLUSH_MAX) flush();
 }
@@ -183,7 +202,7 @@ async function flush() {
   if (!ready || buffer.length === 0) return;
   const batch = buffer;
   buffer = [];
-  const COLS = 18;   // MUST equal the INSERT column list below. A mismatch fails every write.
+  const COLS = 19;   // MUST equal the INSERT column list below. A mismatch fails every write.
   // Jul 31: went 17 -> 18 for agl_ft. This constant and the column list are coupled by a
   // COMMENT, not by anything that checks. If they drift, flush() throws on every batch and
   // the archive silently stops recording while the sweep carries on as normal.
@@ -197,7 +216,7 @@ async function flush() {
   try {
     await pool.query(
       `INSERT INTO drone_tracks
-        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country, site_dist_nm, pos_method, pos_computed, agl_ft)
+        (icao, ts, lat, lon, alt_ft, speed_kt, heading, kind, confidence, callsign, type_code, descr, site, country, site_dist_nm, pos_method, pos_computed, agl_ft, on_ground)
        VALUES ${values}`,
       batch.flat()
     );
