@@ -154,6 +154,14 @@ async function init() {
     console.log(`[archive] connected · retaining ${RETAIN_DAYS} days`);
     prune();
     setInterval(prune, 6 * 60 * 60 * 1000);   // prune every 6h
+    runOps();                                  // once at boot, guarded below
+    // CHECKS HOURLY, ACTS DAILY. Render's free tier has no scheduler, so this is a timer inside
+    // the process — and this service restarted TEN TIMES IN FIVE DAYS, so a naive daily timer
+    // would re-run on every deploy and could skip a day entirely if a restart landed badly.
+    // The guard is in the DATABASE, not in memory: runOps asks when it last completed and returns
+    // if that was recent. Restart-proof without a scheduler, and a missed day is visible in
+    // drone_ops_runs rather than silent.
+    setInterval(runOps, 60 * 60 * 1000);
     setInterval(flush, FLUSH_MS);             // batched writes
     process.on("SIGTERM", () => { flush().catch(() => {}); });  // don't lose the buffer on redeploy
     return true;
@@ -842,6 +850,32 @@ async function multiStop(days = 7, minStops = 2, limit = 40, distNm = 10, altFt 
     count: aircraft.length,
     aircraft,
   };
+}
+
+const OPS_DAYS = Number(process.env.OPS_DAYS || 2);        // recompute window
+const OPS_EVERY_H = Number(process.env.OPS_EVERY_H || 20);  // skip if it ran more recently
+
+// THE WINDOW IS SHORT ON PURPOSE. Endpoints near the edge of a window can change as more rows
+// arrive — an aircraft that looks like it vanished may simply not have been polled yet — so the
+// last couple of days are RECOMPUTED rather than trusted, and older rows are left alone.
+// The write is an upsert (ON CONFLICT DO NOTHING on icao+site+ev+ts), so overlapping runs are
+// idempotent: running this twice changes nothing, which is what makes a restart safe.
+async function runOps() {
+  if (!ready) return;
+  try {
+    const last = await opsLastRun();
+    if (last && Date.now() - new Date(last.ran_at).getTime() < OPS_EVERY_H * 3600e3) return;
+    // Required lazily: operations.js requires airfields.js, which loads 85,758 records on first
+    // use. Requiring it at module scope would pay that cost on every boot even when the job is
+    // not due.
+    const { compute } = require("./operations.js");
+    const events = await compute({ days: OPS_DAYS, quiet: true });
+    const n = await writeOperations(events);
+    console.log(`[ops] ${events.length} endpoint(s) computed over ${OPS_DAYS}d · ${n} new row(s) stored`);
+  } catch (e) {
+    // A failed run must not take the service down or block the next attempt an hour later.
+    console.error("[ops] recompute failed:", e.message);
+  }
 }
 
 // Read operations for a site. Returns null when the archive is disabled, [] when there is nothing.
