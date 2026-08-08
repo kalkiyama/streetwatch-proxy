@@ -18,6 +18,7 @@ const droneSweep = require("./drone-sweep.js");
 const airfields = require("./airfields.js");
 const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
+const cyber = require("./cyber-proxy.js");
 const ai = require("./claude-proxy.js");
 const geometry = require("./geometry.js");
 const advisories = require("./airspace-advisories.js");
@@ -379,6 +380,31 @@ async function handler(req, res) {
     }, origin);
   }
 
+  // CYBER — three sources, and each response carries WHAT ITS NUMBERS MEAN rather than leaving the
+  // client to imply something stronger. See cyber-proxy.js for why that matters: an unlabelled arc
+  // between two countries is the one thing every competitor's map gets wrong.
+  if (p === "/api/cyber/flows" || p === "/api/cyber/outages" || p === "/api/cyber/kev") {
+    const u = new URL(req.url, "http://localhost");
+    // KEV needs no key — it is US government public domain — so only the Cloudflare routes are
+    // gated. Returning 503 with a REASON beats an opaque error: a missing token is a deployment
+    // fact, not a fault the caller can fix by retrying.
+    if (p !== "/api/cyber/kev" && !cyber.configured())
+      return send(res, 503, { error: "not_configured", detail: "CF_RADAR_TOKEN not set on this instance." }, origin);
+    try {
+      if (p === "/api/cyber/flows")
+        return send(res, 200, await cyber.flows(Math.min(Number(u.searchParams.get("limit")) || 12, 50)), origin);
+      if (p === "/api/cyber/outages")
+        return send(res, 200, await cyber.outages(
+          Math.min(Number(u.searchParams.get("days")) || 7, 90),
+          Math.min(Number(u.searchParams.get("limit")) || 20, 50)), origin);
+      return send(res, 200, await cyber.kev(Math.min(Number(u.searchParams.get("limit")) || 25, 100)), origin);
+    } catch (e) {
+      // The cache serves stale on upstream failure; reaching here means there was nothing cached
+      // either. Say which source failed rather than a bare 502.
+      return send(res, 502, { error: "upstream_unavailable", source: p.split("/").pop(), detail: e.message }, origin);
+    }
+  }
+
   if (p === "/api/webcams") {
     const u = new URL(req.url, "http://localhost");
     return send(res, 200, await webcams.getWebcams(
@@ -501,7 +527,10 @@ async function handler(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/webcams", "/health", "/metrics"] }, origin);
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows",
+      "/api/cyber/kev",
+      "/api/cyber/outages",
+      "/api/webcams", "/health", "/metrics"] }, origin);
 }
 
 function createServer() { return http.createServer(handler); }
