@@ -234,7 +234,11 @@ async function handler(req, res) {
       country,
       // NO CONTINENT for "International" (waters belonging to nobody) or "Russia/Ukraine
       // (disputed)" (Crimea — the product does not pick a side). Absent, not guessed.
-      continent: CONTINENT[country] || null,
+      // "International" rather than null for the 13 sites in international waters or on disputed
+      // ground. NOT a fudge: null rendered as a region group literally labelled "null", which says
+      // nothing, and assigning them to Europe or Asia would take the position the product
+      // deliberately declines to take on Crimea. "International" says what they ARE.
+      continent: CONTINENT[country] || "International",
       src: "ADS-B live",
       url: "https://globe.adsbexchange.com/",
       lat, lng: lon,
