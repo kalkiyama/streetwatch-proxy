@@ -179,6 +179,11 @@ async function handler(req, res) {
     if (!rows) return send(res, 503, { error: "archive_disabled", detail: "No archive configured on this instance." }, origin);
     const summary = site ? await archive.operationsSummary({ site, days }) : null;
     const run = await archive.opsLastRun();
+    // WHEN THE DATA ACTUALLY ENDS, which is not now. An arrival is confirmed only once the
+    // observation clock has run 4h past it and the site has been polled again — up to 40h on the
+    // cold tier. So "last 7 days" is a QUERY window, not a coverage window, and the client needs
+    // both to say something true.
+    const fresh = await archive.operationsFreshness();
     return send(res, 200, {
       source: "StreetWatch archive",
       // SCOPE, in the payload, because the number is smaller than a reader expects and the reason
@@ -188,6 +193,9 @@ async function handler(req, res) {
       measures: "arrivals from and departures to elsewhere — not total movements",
       basis: "inferred from where tracks end and begin, never an observed landing",
       lastComputed: run ? run.ran_at : null,
+      confirmedThrough: fresh ? fresh.newest : null,
+      recordedSince: fresh ? fresh.oldest : null,
+      lag: "operations are retrospective — an event is confirmed only after the site has been polled again, typically about a day",
       site: site || null,
       summary,
       count: rows.length,
