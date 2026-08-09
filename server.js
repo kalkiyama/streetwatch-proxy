@@ -178,6 +178,9 @@ async function handler(req, res) {
     const rows = await archive.operations({ site, days, limit: u.searchParams.get("limit") });
     if (!rows) return send(res, 503, { error: "archive_disabled", detail: "No archive configured on this instance." }, origin);
     const summary = site ? await archive.operationsSummary({ site, days }) : null;
+    // With no site, return the RANKING rather than a flat event list — the panel shows which bases
+    // are busiest first, and the reader drills into one.
+    const ranked = site ? null : await archive.operationsRanked({ days, limit: 20 });
     const run = await archive.opsLastRun();
     // WHEN THE DATA ACTUALLY ENDS, which is not now. An arrival is confirmed only once the
     // observation clock has run 4h past it and the site has been polled again — up to 40h on the
@@ -198,6 +201,7 @@ async function handler(req, res) {
       lag: "operations are retrospective — an event is confirmed only after the site has been polled again, typically about a day",
       site: site || null,
       summary,
+      sites: ranked,
       count: rows.length,
       operations: rows,
     }, origin);

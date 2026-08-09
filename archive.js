@@ -908,6 +908,27 @@ async function operationsFreshness() {
   return rows[0] || null;
 }
 
+// RANKED, so the panel can show which bases are busiest before asking the reader to pick one.
+// Ordered by total events rather than arrivals alone: a site with 20 departures and 2 arrivals is
+// as interesting as the reverse, and ranking by one direction would hide it.
+async function operationsRanked({ days = 7, limit = 20 } = {}) {
+  if (!ready) return null;
+  const d = Math.min(Math.max(Number(days) || 7, 1), RETAIN_DAYS);
+  const lim = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const { rows } = await pool.query(
+    `SELECT site,
+            count(*) FILTER (WHERE ev = 'arrival')::int   AS arrivals,
+            count(*) FILTER (WHERE ev = 'departure')::int AS departures,
+            count(DISTINCT icao)::int                     AS airframes,
+            max(ts) AS last_event
+       FROM drone_operations
+      WHERE ts > now() - ($1 || ' days')::interval
+      GROUP BY site
+      ORDER BY count(*) DESC
+      LIMIT $2`, [String(d), lim]);
+  return rows;
+}
+
 // Summary per site, for the panel. Derived from the same events.
 async function operationsSummary({ site, days = 7 } = {}) {
   if (!ready || !site) return null;
@@ -957,7 +978,7 @@ module.exports = {
   ageHours,
   multiStop,
   coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS,
-  operations, operationsSummary, operationsFreshness, writeOperations, opsLastRun,
+  operations, operationsSummary, operationsRanked, operationsFreshness, writeOperations, opsLastRun,
   // Exported so server.js reports the radius it ACTUALLY queried instead of its own copy of the
   // same literal. Change the query and the API would otherwise keep telling clients the old one.
   SWEEP_NM, REGION_NM, NEAR_NM, TERMINAL_NM, TERMINAL_FT, OVERFLIGHT_FT };
