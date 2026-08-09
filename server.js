@@ -15,6 +15,67 @@ const http = require("http");
 const adsb = require("./adsb-proxy.js");
 const ais = require("./ais-proxy.js");
 const droneSweep = require("./drone-sweep.js");
+
+// COUNTRY -> CONTINENT, extracted from the web app's existing catalog rather than written by hand,
+// so it agrees with what every other feed in the product already says. 170 of the sweep's 172
+// countries are covered; the two that are not are deliberate — see the /api/drones/sites route.
+const CONTINENT = {
+  "Afghanistan": "Asia", "Albania": "Europe", "Algeria": "Africa", "Angola": "Africa",
+  "Argentina": "South America", "Armenia": "Asia", "Australia": "Oceania", "Austria": "Europe",
+  "Azerbaijan": "Asia", "Bahrain": "Asia", "Bangladesh": "Asia", "Belarus": "Europe",
+  "Belgium": "Europe", "Benin": "Africa", "Bolivia": "South America",
+  "Bosnia and Herzegovina": "Europe", "Botswana": "Africa", "Brazil": "South America",
+  "Brunei": "Asia", "Bulgaria": "Europe", "Burkina Faso": "Africa", "Cambodia": "Asia",
+  "Cameroon": "Africa", "Canada": "North America", "Chad": "Africa", "Chile": "South America",
+  "China": "Asia", "Colombia": "South America", "Croatia": "Europe", "Cuba": "North America",
+  "Cyprus": "Europe", "Czechia": "Europe", "Democratic Republic of the Congo": "Africa",
+  "Denmark": "Europe", "Djibouti": "Africa", "Dominican Republic": "North America",
+  "Ecuador": "South America", "Egypt": "Africa", "El Salvador": "North America",
+  "Estonia": "Europe", "Eswatini": "Africa", "Ethiopia": "Africa", "Finland": "Europe",
+  "France": "Europe", "Gabon": "Africa", "Georgia": "Asia", "Germany": "Europe", "Ghana": "Africa",
+  "Greece": "Europe", "Guam": "Oceania", "Guatemala": "North America", "Guinea": "Africa",
+  "Guyana": "South America", "Haiti": "North America", "Honduras": "North America",
+  "Hungary": "Europe", "Iceland": "Europe", "India": "Asia", "Indonesia": "Asia", "Iran": "Asia",
+  "Iraq": "Asia", "Ireland": "Europe", "Israel": "Asia", "Italy": "Europe", "Jamaica": "North America",
+  "Japan": "Asia", "Jordan": "Asia", "Kazakhstan": "Asia", "Kenya": "Africa", "Kuwait": "Asia",
+  "Kyrgyzstan": "Asia", "Laos": "Asia", "Latvia": "Europe", "Lebanon": "Asia", "Libya": "Africa",
+  "Lithuania": "Europe", "Luxembourg": "Europe", "Madagascar": "Africa", "Malaysia": "Asia",
+  "Mali": "Africa", "Malta": "Europe", "Mauritania": "Africa", "Mexico": "North America",
+  "Moldova": "Europe", "Mongolia": "Asia", "Montenegro": "Europe", "Morocco": "Africa",
+  "Mozambique": "Africa", "Myanmar": "Asia", "Namibia": "Africa", "Nepal": "Asia",
+  "Netherlands": "Europe", "New Zealand": "Oceania", "Nicaragua": "North America",
+  "Niger": "Africa", "Nigeria": "Africa", "North Korea": "Asia", "North Macedonia": "Europe",
+  "Norway": "Europe", "Oman": "Asia", "Pakistan": "Asia", "Panama": "North America",
+  "Papua New Guinea": "Oceania", "Paraguay": "South America", "Peru": "South America",
+  "Philippines": "Asia", "Poland": "Europe", "Portugal": "Europe", "Qatar": "Asia",
+  "Romania": "Europe", "Russia": "Europe", "Rwanda": "Africa", "Saudi Arabia": "Asia",
+  "Senegal": "Africa", "Serbia": "Europe", "Singapore": "Asia", "Slovakia": "Europe",
+  "Slovenia": "Europe", "Somalia": "Africa", "South Africa": "Africa", "South Korea": "Asia",
+  "South Sudan": "Africa", "Spain": "Europe", "Sri Lanka": "Asia", "Sudan": "Africa",
+  "Sweden": "Europe", "Switzerland": "Europe", "Syria": "Asia", "Taiwan": "Asia",
+  "Tajikistan": "Asia", "Tanzania": "Africa", "Thailand": "Asia", "Tunisia": "Africa",
+  "Turkey": "Asia", "Turkmenistan": "Asia", "Uganda": "Africa", "Ukraine": "Europe",
+  "United Arab Emirates": "Asia", "United Kingdom": "Europe", "United States": "North America",
+  "Uruguay": "South America", "Uzbekistan": "Asia", "Venezuela": "South America",
+  "Vietnam": "Asia", "Yemen": "Asia", "Zambia": "Africa", "Zimbabwe": "Africa",
+  // THE SWEEP'S OWN SPELLINGS. My first table used formal names and the sweep uses short ones —
+  // "UAE" not "United Arab Emirates", "Turkiye" not "Turkey", "DR Congo" not "Democratic Republic
+  // of the Congo". Nine countries fell through the gap looking like missing data when they were
+  // only spelled differently.
+  "UAE": "Asia", "Turkiye": "Asia", "Bosnia": "Europe", "Congo": "Africa", "DR Congo": "Africa",
+  "Dominican Rep": "North America", "Central African Rep": "Africa", "Trinidad": "North America",
+  "Cote d'Ivoire": "Africa", "Costa Rica": "North America",
+  // Countries the 68 newly-added sites brought with them, absent from the older catalog entirely.
+  "Antarctica": "Antarctica", "BIOT": "Africa", "Bahamas": "North America",
+  "Belize": "North America", "Curacao": "North America", "Eritrea": "Africa", "Fiji": "Oceania",
+  "French Polynesia": "Oceania", "Greenland": "North America", "Liberia": "Africa",
+  "Malawi": "Africa", "Maldives": "Asia", "Marshall Islands": "Oceania",
+  "New Caledonia": "Oceania", "Solomon Islands": "Oceania", "Suriname": "South America",
+  "Timor-Leste": "Asia", "Togo": "Africa", "Vanuatu": "Oceania",
+  // NOT GIVEN ONE, deliberately: "International", "International waters" (belonging to nobody) and
+  // "Russia/Ukraine (disputed)" (Crimea — the product does not pick a side).
+};
+
 const airfields = require("./airfields.js");
 const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
@@ -150,6 +211,43 @@ async function handler(req, res) {
   // Rate-limit every /api/* route (health stays free for uptime pings).
   if (p.startsWith("/api/") && rateLimited(clientIp(req)))
     return send(res, 429, { error: "rate_limited", retryAfterSec: 60 }, origin);
+
+  // THE WATCHED SITES, AS CATALOG ENTRIES. The web app's catalog.json had 240 hand-maintained
+  // "uav" rows against the sweep's 308 — 68 airfields watched and unlisted, so a reader searching
+  // for one concluded it was not covered. Serving them from SITES means there is one list.
+  if (p === "/api/drones/sites") {
+    const u = new URL(req.url, "http://localhost");
+    const named = droneSweep.SITES.filter((x) => x[1] !== "Deep sweep");
+    // Derived from the NAME, never the index. Ids appear in share links (?feed=UAV-12), and
+    // numbering by position repoints every one of them the moment a site is inserted mid-list.
+    const slug = (n) => "UAV-" + String(n).toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
+    const sites = named.map(([name, country, lat, lon]) => ({
+      id: slug(name),
+      name: `UAV Watch · ${name}`,
+      layer: "aviation",
+      tag: "uav",
+      // The city is the first part of a name like "Creech / Nellis" — mechanical, and matches how
+      // the hand-written entries were built.
+      city: String(name).split(/\s*[/·]\s*/)[0].trim(),
+      region: country,
+      country,
+      // NO CONTINENT for "International" (waters belonging to nobody) or "Russia/Ukraine
+      // (disputed)" (Crimea — the product does not pick a side). Absent, not guessed.
+      continent: CONTINENT[country] || null,
+      src: "ADS-B live",
+      url: "https://globe.adsbexchange.com/",
+      lat, lng: lon,
+    }));
+    return send(res, 200, {
+      source: "StreetWatch sweep",
+      basis: "the airfields this sweep actually watches — generated from the site list, not a copy of it",
+      count: sites.length,
+      sites: u.searchParams.get("country")
+        ? sites.filter((x) => x.country === u.searchParams.get("country"))
+        : sites,
+    }, origin);
+  }
 
   if (p === "/api/drones") {
     const u = new URL(req.url, "http://localhost");
@@ -539,7 +637,7 @@ async function handler(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows",
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows",
       "/api/cyber/kev",
       "/api/cyber/outages",
       "/api/webcams", "/health", "/metrics"] }, origin);
