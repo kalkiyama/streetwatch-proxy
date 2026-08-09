@@ -895,6 +895,19 @@ async function operations({ site = null, days = 7, limit = 200 } = {}) {
   return rows;
 }
 
+// THE NEWEST EVENT, which is NOT "now". An arrival is only confirmed once the observation clock has
+// run OBS_MS (4h) past it AND the site has been polled again — on the cold tier that is up to 40
+// hours. So operations lag reality by roughly a day, and a panel reading "26 arrivals in the last
+// 7 days" would imply a currency the method cannot have.
+// This is not a fault to fix. It is what inferring an event from a track ENDING costs, and the
+// surface should state it rather than let the reader assume otherwise.
+async function operationsFreshness() {
+  if (!ready) return null;
+  const { rows } = await pool.query(
+    `SELECT max(ts) AS newest, min(ts) AS oldest, count(*)::int AS total FROM drone_operations`);
+  return rows[0] || null;
+}
+
 // Summary per site, for the panel. Derived from the same events.
 async function operationsSummary({ site, days = 7 } = {}) {
   if (!ready || !site) return null;
@@ -944,7 +957,7 @@ module.exports = {
   ageHours,
   multiStop,
   coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS,
-  operations, operationsSummary, writeOperations, opsLastRun,
+  operations, operationsSummary, operationsFreshness, writeOperations, opsLastRun,
   // Exported so server.js reports the radius it ACTUALLY queried instead of its own copy of the
   // same literal. Change the query and the API would otherwise keep telling clients the old one.
   SWEEP_NM, REGION_NM, NEAR_NM, TERMINAL_NM, TERMINAL_FT, OVERFLIGHT_FT };
