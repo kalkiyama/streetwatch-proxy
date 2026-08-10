@@ -67,7 +67,7 @@ async function group(name) {
   try {
     const r = await fetch(`${CT}?GROUP=${encodeURIComponent(name)}&FORMAT=tle`, {
       headers: { "User-Agent": "streetwatch.earth (contact via site)" },
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(25000),
     });
     if (!r.ok) throw new Error(`celestrak ${r.status}`);
 
