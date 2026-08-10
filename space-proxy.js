@@ -91,6 +91,10 @@ async function group(name) {
     cache.set(name, { at: Date.now(), payload });
     return { ...payload, cached: false };
   } catch (e) {
+    // Node reports every transport failure as the opaque "fetch failed"; the real reason
+    // (ENOTFOUND, ECONNREFUSED, cert errors) hides in .cause. Surface it or debugging a
+    // remote host is guesswork.
+    if (e && e.cause) e = new Error(`${e.message}: ${e.cause.code || e.cause.message || e.cause}`);
     // STALE BEATS EMPTY, the same rule as cyber-proxy: an upstream blip should not
     // blank a panel that was correct an hour ago. But the response admits it, because
     // a silently old number is the defect this project keeps finding.
