@@ -80,7 +80,6 @@ const airfields = require("./airfields.js");
 const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
 const cyber = require("./cyber-proxy.js");
-const space = require("./space-proxy.js");
 const ai = require("./claude-proxy.js");
 const geometry = require("./geometry.js");
 const advisories = require("./airspace-advisories.js");
@@ -495,26 +494,6 @@ async function handler(req, res) {
     }, origin);
   }
 
-  // SPACE — orbital element sets for the satellite layer. Positions derived from these are
-  // COMPUTED by SGP4 propagation on the client, never observed: a different data class from ADS-B
-  // and AIS, which the object itself broadcasts. `computed: true` rides in every payload so the
-  // distinction cannot be dropped between here and the label on screen.
-  if (p === "/api/space/groups" || p === "/api/space/tle") {
-    const u = new URL(req.url, "http://localhost");
-    if (p === "/api/space/groups") return send(res, 200, { groups: space.groups() }, origin);
-    const g = u.searchParams.get("group") || "stations";
-    // Validate against the known set rather than passing a caller string upstream — the group name
-    // becomes part of the CelesTrak URL.
-    if (!space.GROUPS[g])
-      return send(res, 400, { error: "unknown_group", detail: g, known: Object.keys(space.GROUPS) }, origin);
-    try {
-      return send(res, 200, await space.group(g), origin);
-    } catch (e) {
-      // space-proxy serves stale on upstream failure; reaching here means nothing was cached either.
-      return send(res, 502, { error: "upstream_unavailable", source: "celestrak", group: g, detail: e.message }, origin);
-    }
-  }
-
   // CYBER — three sources, and each response carries WHAT ITS NUMBERS MEAN rather than leaving the
   // client to imply something stronger. See cyber-proxy.js for why that matters: an unlabelled arc
   // between two countries is the one thing every competitor's map gets wrong.
@@ -662,7 +641,7 @@ async function handler(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/space/groups", "/api/space/tle",
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows",
       "/api/cyber/kev",
       "/api/cyber/outages",
       "/api/webcams", "/health", "/metrics"] }, origin);
