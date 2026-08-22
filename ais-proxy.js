@@ -252,6 +252,13 @@ function startKystverket() {
   const connect = () => {
     sock = net.createConnection({ host: KV_HOST, port: KV_PORT });
     sock.setEncoding("ascii");
+    // TCP keepalive, because the feed is BURSTY: quiet stretches when few vessels are transmitting
+    // look identical to a dead flow, and something between here and Norway was dropping the
+    // connection after roughly three seconds of silence — visible as endless connect/disconnect
+    // churn at retry #1, never escalating, because each reconnect genuinely succeeded first.
+    // Probes every 15s keep the path warm without sending anything the protocol would notice.
+    sock.setKeepAlive(true, 15000);
+    sock.setNoDelay(true);
     sock.on("connect", () => { kvState.connected = true; kvState.retries = 0; console.log(`[kystverket] connected ${KV_HOST}:${KV_PORT}`); });
     sock.on("data", (d) => {
       buf += d;
