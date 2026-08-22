@@ -464,8 +464,18 @@ async function heat({ days = 7, siteCoords = {} } = {}) {
         WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
         GROUP BY site ORDER BY count(DISTINCT icao) DESC`;
 
-  const { rows } = await pool.query(sql, names.length ? [String(d), names, lats, lons] : [String(d)]);
-  return rows;
+  try {
+    const { rows } = await pool.query(sql, names.length ? [String(d), names, lats, lons] : [String(d)]);
+    return rows;
+  } catch (e) {
+    // Aug 17: this threw a bare pool rejection and KILLED THE PROCESS — the AIS feeds, the sweep
+    // and an hour of buffered archive rows went with it, because one visitor opened ACTIVITY
+    // while Neon's compute was suspended. Hourly flushing made suspension the normal state, so a
+    // cold-start timeout is now a routine event rather than a rare one. An empty result degrades
+    // one panel; an uncaught throw takes down six data sources.
+    console.error("[archive] heat failed:", e.message);
+    return [];
+  }
 }
 
 async function stats() {
