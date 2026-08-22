@@ -218,7 +218,28 @@ function send(res, status, obj, origin) {
   res.end(JSON.stringify(obj));
 }
 
+// Every request funnels through one handler, so one guard covers all 39 query sites at once.
+//
+// Aug 17: a cold-start timeout inside /api/drones/heat threw past this point and exited the
+// process with status 1 — the ADS-B sweep, three AIS feeds and an hour of buffered archive rows
+// went with it, because one visitor opened ACTIVITY while Neon's compute was suspended. Hourly
+// flushing made suspension the normal state, so cold starts went from rare to routine.
+//
+// A 503 names the fault and keeps the other five sources alive. The process-level backstops below
+// remain for anything thrown OUTSIDE a request, which this cannot reach.
 async function handler(req, res) {
+  try {
+    return await route(req, res);
+  } catch (e) {
+    console.error("[proxy] request failed:", req && req.url, e && e.message);
+    try {
+      const origin = req.headers && req.headers.origin;
+      return send(res, 503, { error: "upstream_unavailable", detail: e && e.message }, origin);
+    } catch { /* response already started or socket gone — nothing safe left to do */ }
+  }
+}
+
+async function route(req, res) {
   const origin = req.headers.origin;
   if (req.method === "OPTIONS") return send(res, 204, {}, origin);
   const p = new URL(req.url, "http://localhost").pathname;
