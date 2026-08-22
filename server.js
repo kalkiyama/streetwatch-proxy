@@ -667,10 +667,19 @@ async function route(req, res) {
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180)
       return send(res, 400, { error: "lat and lon required (lat -90..90, lon -180..180)" }, origin);
     if (!Number.isFinite(radius) || radius < 1) radius = 50;
+    // 250nm is airplanes.live's own hard cap, not ours — see MAX_RADIUS_NM in adsb-proxy.js.
+    // Previously a request for 2000 came back reporting `radius: 250` with no indication it had
+    // been reduced, so the world map drew a circle of traffic in the middle of an empty screen and
+    // nothing said why. Reporting both numbers lets the client say "250nm around the centre".
+    const asked = radius;
     radius = Math.min(radius, MAX_RADIUS);
     try {
       const data = p === "/api/aircraft" ? await adsb.fetchAircraft(lat, lon, radius) : await ais.getVessels(lat, lon, radius);
-      return send(res, 200, { query: { lat, lon, radius }, ...data }, origin);
+      return send(res, 200, {
+        query: { lat, lon, radius },
+        ...(asked > radius ? { requestedRadius: asked, maxRadius: MAX_RADIUS, clamped: true } : {}),
+        ...data,
+      }, origin);
     } catch (e) {
       console.error("[proxy] upstream error:", (e && e.message) || e); // logged, not exposed
       return send(res, 502, { error: "upstream_unavailable" }, origin);
