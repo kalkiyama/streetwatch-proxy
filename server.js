@@ -80,6 +80,22 @@ const airfields = require("./airfields.js");
 const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
 const cyber = require("./cyber-proxy.js");
+
+// PROCESS-LEVEL BACKSTOP. Aug 17: an uncaught pool timeout inside /api/drones/heat exited the
+// process with status 1, taking the ADS-B sweep, three AIS feeds and an hour of buffered archive
+// rows with it — because one visitor opened ACTIVITY while Neon's compute was suspended.
+//
+// This proxy aggregates six independent sources. A fault in one must degrade that one, not end
+// them all. Every query SHOULD be wrapped at its call site; this exists for the ones that are not,
+// and for the ones added later by someone who forgets.
+process.on("unhandledRejection", (err) => {
+  console.error("[proxy] unhandled rejection (survived):", err && err.message ? err.message : err);
+});
+process.on("uncaughtException", (err) => {
+  // Deliberately kept alive. A half-broken proxy still serving five sources beats a dead one, and
+  // Render's free tier takes ~50s to cold start a replacement.
+  console.error("[proxy] uncaught exception (survived):", err && err.stack ? err.stack : err);
+});
 const ai = require("./claude-proxy.js");
 const geometry = require("./geometry.js");
 const advisories = require("./airspace-advisories.js");
