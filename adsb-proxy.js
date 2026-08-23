@@ -164,7 +164,12 @@ function normalize(upstream) {
         verticalRateFpm: typeof a.baro_rate === "number" ? a.baro_rate : null,
         squawk: a.squawk || null,
         category: a.category || null,            // ADS-B emitter category (A1 light … B6 UAV)
-        isDrone: a.category === "B6",            // B6 = unmanned aerial vehicle
+        // B6 is ICAO's unmanned-aerial-vehicle category, broadcast by the aircraft itself. NULL
+        // when no category was broadcast at all: "did not say" is not "said it is not a drone",
+        // and collapsing them into false is the same conflation `military` below already avoids.
+        // (Seen in the wild: a 1940s Luscombe 8 transmitting B6 — misconfigured equipment, and the
+        // app should report what was broadcast rather than second-guess it.)
+        isDrone: a.category ? a.category === "B6" : null,
         desc: String(a.desc || "").trim() || null,        // e.g. "BOEING 737-800"
         operator: String(a.ownOp || "").trim() || null,   // owner / operator
         year: a.year ? String(a.year) : null,
