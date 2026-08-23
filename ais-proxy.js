@@ -248,7 +248,7 @@ function handleAivdmLine(line) {
 
 function startKystverket() {
   const net = require("net");
-  let sock = null, buf = "";
+  let sock = null, buf = "", kvKeepAlive = null;
   const connect = () => {
     sock = net.createConnection({ host: KV_HOST, port: KV_PORT });
     sock.setEncoding("ascii");
@@ -259,7 +259,18 @@ function startKystverket() {
     // Probes every 15s keep the path warm without sending anything the protocol would notice.
     sock.setKeepAlive(true, 15000);
     sock.setNoDelay(true);
-    sock.on("connect", () => { kvState.connected = true; kvState.retries = 0; console.log(`[kystverket] connected ${KV_HOST}:${KV_PORT}`); });
+    sock.on("connect", () => {
+      kvState.connected = true; kvState.retries = 0;
+      console.log(`[kystverket] connected ${KV_HOST}:${KV_PORT}`);
+      // APPLICATION-level keepalive. TCP keepalive was tried first and changed nothing, which
+      // means the disconnect comes from their server rather than the network path: the feed drops
+      // clients that never transmit, and a TCP probe is invisible to the application above it.
+      // A bare newline is inert to the AIVDM protocol — it parses as an empty line and is
+      // discarded — but it proves the client is alive. Cleared in `down()` with the socket.
+      kvKeepAlive = setInterval(() => {
+        if (sock === mySock && !sock.destroyed) { try { sock.write("\n"); } catch { /* teardown races */ } }
+      }, 30000);
+    });
     sock.on("data", (d) => {
       buf += d;
       let nl;
@@ -276,6 +287,7 @@ function startKystverket() {
     const mySock = sock;
     const down = () => {
       if (sock !== mySock) return;            // already torn down / superseded
+      if (kvKeepAlive) { clearInterval(kvKeepAlive); kvKeepAlive = null; }
       sock.destroy(); sock = null; buf = "";
       kvState.connected = false;
       const wait = Math.min(3000 * 2 ** kvState.retries, 60000);
