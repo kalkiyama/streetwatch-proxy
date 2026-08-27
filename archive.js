@@ -522,6 +522,94 @@ async function lastSeenBySite({ days = 30 } = {}) {
 
 // Aggregates for the weekly digest. All arithmetic happens HERE, in SQL — the language
 // model is handed finished numbers and asked only to write them up. It never counts.
+// EVERY watched site, not a leaderboard.
+//
+// digestData() returns the top 8 sites and top 10 countries, which is right for a briefing —
+// nobody reads 394 rows of prose. But it meant 98% of what the archive knows never reached the
+// app at all: a country with four contacts, or a site that appeared once, was invisible no matter
+// how you looked. Two endpoints rather than one flag, because they answer different questions:
+// "what is worth mentioning" and "show me everything".
+//
+// The prev-window query in digestData already fetches all sites unlimited and then discards most
+// of it against the truncated top-8, so the comparison here costs nothing new.
+//
+// CACHED FOR AN HOUR. This is a 423,000-row aggregate over a database on a metered free tier, and
+// a week's activity does not change meaningfully between page loads.
+let _saCache = null;
+async function sitesActivity({ days = 7 } = {}) {
+  if (!isReady()) return null;
+  const d = String(days);
+  if (_saCache && _saCache.days === d && Date.now() - _saCache.at < 3600000) {
+    return { ..._saCache.payload, cached: true };
+  }
+  try {
+    const [now_, prev_, cov] = await Promise.all([
+      pool.query(
+        `SELECT site, (array_agg(country ORDER BY ts DESC))[1] AS country,
+                COUNT(DISTINCT icao) AS contacts,
+                COUNT(DISTINCT icao) FILTER (WHERE kind = 'uav') AS uav,
+                COUNT(DISTINCT icao) FILTER (WHERE kind = 'military') AS military,
+                COUNT(DISTINCT icao) FILTER (WHERE alt_ft IS NOT NULL AND alt_ft < 4000
+                                               AND site_dist_nm IS NOT NULL AND site_dist_nm <= 10) AS terminal,
+                MAX(ts) AS last_seen
+           FROM drone_tracks
+          WHERE ts > now() - ($1 || ' days')::interval AND site IS NOT NULL
+          GROUP BY site`, [d]),
+      pool.query(
+        `SELECT site, COUNT(DISTINCT icao) AS contacts
+           FROM drone_tracks
+          WHERE ts > now() - ($1 || ' days')::interval * 2
+            AND ts <= now() - ($1 || ' days')::interval
+            AND site IS NOT NULL
+          GROUP BY site`, [d]),
+      pool.query(`SELECT MIN(ts) AS earliest FROM drone_tracks`),
+    ]);
+
+    const prevBy = {};
+    prev_.rows.forEach((r) => { prevBy[r.site] = Number(r.contacts); });
+
+    // A young archive makes every site look like a dramatic riser ("0 -> 344") when the truth is
+    // that the previous window predates the recording. Change is left NULL unless the data
+    // supports the comparison — the same guard digestData applies.
+    const earliest = cov.rows[0] && cov.rows[0].earliest ? new Date(cov.rows[0].earliest) : null;
+    const coversPrev = !!earliest && earliest <= new Date(Date.now() - days * 2 * 86400000);
+
+    const sites = now_.rows.map((r) => {
+      const contacts = Number(r.contacts);
+      const prev = coversPrev && prevBy[r.site] != null ? prevBy[r.site] : null;
+      return {
+        site: r.site,
+        country: r.country || null,
+        contacts,
+        uav: Number(r.uav),
+        military: Number(r.military),
+        terminal: Number(r.terminal),
+        lastSeen: r.last_seen,
+        prev,
+        // Percentage change, only where a previous window exists AND had enough traffic for a
+        // percentage to mean anything. 1 -> 3 is not a 200% rise in any useful sense.
+        changePct: prev != null && prev >= 5 ? Math.round(((contacts - prev) / prev) * 100) : null,
+      };
+    }).sort((a, b) => b.contacts - a.contacts);
+
+    const payload = {
+      windowDays: days,
+      coversPrevWindow: coversPrev,
+      archiveAgeHours: earliest ? Math.round((Date.now() - earliest) / 3600000) : 0,
+      note: "Every site the sweep recorded in this window, not a leaderboard. `prev` and "
+          + "`changePct` are null where the archive does not reach back far enough to compare, or "
+          + "where the previous window was too small for a percentage to mean anything.",
+      total: sites.length,
+      sites,
+    };
+    _saCache = { at: Date.now(), days: d, payload };
+    return { ...payload, cached: false };
+  } catch (e) {
+    console.error("[archive] sitesActivity failed:", e.message);
+    return null;
+  }
+}
+
 async function digestData({ days = 7, siteCoords = {} } = {}) {
   if (!isReady()) return null;
   const d = String(days);
@@ -985,6 +1073,7 @@ async function opsLastRun() {
 }
 
 module.exports = {
+  sitesActivity,
   ageHours,
   multiStop,
   coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS,

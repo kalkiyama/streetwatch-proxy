@@ -675,6 +675,16 @@ async function route(req, res) {
 
   if (p === "/api/archive/stats") return send(res, 200, await archive.stats(), origin);
 
+  // Every watched site with its week-over-week change. Separate from /api/ai/digest, which stays a
+  // top-8 summary because a briefing over 394 sites is not a briefing.
+  if (p === "/api/drones/sites-activity") {
+    const u = new URL(req.url, "http://localhost");
+    const days = Math.min(90, Math.max(1, parseInt(u.searchParams.get("days") || "7", 10) || 7));
+    const data = await archive.sitesActivity({ days });
+    if (!data) return send(res, 503, { error: "archive_unavailable" }, origin);
+    return send(res, 200, data, origin);
+  }
+
   // DATA CENTRES. Served whole: 5,258 records is about 1.8MB, which is one download rather than a
   // query per pan, and the client can then filter instantly without touching the network again.
   // Bounding-box filtering server-side was considered and rejected — it would mean a request on
@@ -713,7 +723,7 @@ async function route(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres",
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/sites-activity", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres",
       "/api/cyber/kev",
       "/api/cyber/outages",
       "/api/webcams", "/health", "/metrics"] }, origin);
