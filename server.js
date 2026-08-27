@@ -115,7 +115,9 @@ process.on("uncaughtException", (err) => {
   // answering no requests at all. On Render that is compute allowance spent on nothing, with no
   // signal that it is happening.
   if (err && err.code === "EADDRINUSE") {
-    console.error(`[proxy] port ${PORT} is already in use — exiting rather than running headless`);
+    // process.env.PORT rather than the PORT constant: this handler is installed at line ~110 and
+    // PORT is declared at ~200, so referencing it here throws inside the exception handler.
+    console.error(`[proxy] port ${process.env.PORT || 8080} is already in use — exiting rather than running headless`);
     process.exit(1);
   }
   // Deliberately kept alive. A half-broken proxy still serving five sources beats a dead one, and
