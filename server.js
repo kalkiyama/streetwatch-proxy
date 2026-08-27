@@ -81,6 +81,22 @@ const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
 const cyber = require("./cyber-proxy.js");
 
+// Data centres, read from a COMMITTED FILE rather than fetched. The upstreams (PeeringDB, and
+// OpenStreetMap via Overpass) are rate-limited free services that both refused us during a single
+// build run; depending on either per request would fail constantly for visitors. Facilities do not
+// move, so a file refreshed by hand every month or two is the right shape — and being in git means
+// `git diff` shows exactly what changed, which no live fetch gives you.
+//
+// Loaded once at startup. If it is missing the endpoint says so rather than pretending to be empty:
+// no data and zero data centres in the world are very different claims.
+let DATACENTRES = null;
+try {
+  DATACENTRES = require("./datacenters.json");
+  console.log(`[datacentres] ${DATACENTRES.total.toLocaleString()} records · built ${DATACENTRES.built.slice(0, 10)}`);
+} catch {
+  console.warn("[datacentres] datacenters.json not found — run build-datacenters.js");
+}
+
 // PROCESS-LEVEL BACKSTOP. Aug 17: an uncaught pool timeout inside /api/drones/heat exited the
 // process with status 1, taking the ADS-B sweep, three AIS feeds and an hour of buffered archive
 // rows with it — because one visitor opened ACTIVITY while Neon's compute was suspended.
@@ -659,6 +675,16 @@ async function route(req, res) {
 
   if (p === "/api/archive/stats") return send(res, 200, await archive.stats(), origin);
 
+  // DATA CENTRES. Served whole: 5,258 records is about 1.8MB, which is one download rather than a
+  // query per pan, and the client can then filter instantly without touching the network again.
+  // Bounding-box filtering server-side was considered and rejected — it would mean a request on
+  // every map movement to save a download that happens once.
+  if (p === "/api/datacentres" || p === "/api/datacenters") {
+    if (!DATACENTRES)
+      return send(res, 503, { error: "not_built", detail: "datacenters.json is missing on this instance." }, origin);
+    return send(res, 200, DATACENTRES, origin);
+  }
+
   if (p === "/api/aircraft" || p === "/api/vessels") {
     const u = new URL(req.url, "http://localhost");
     const lat = parseFloat(u.searchParams.get("lat"));
@@ -687,7 +713,7 @@ async function route(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows",
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres",
       "/api/cyber/kev",
       "/api/cyber/outages",
       "/api/webcams", "/health", "/metrics"] }, origin);
