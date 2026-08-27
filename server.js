@@ -108,6 +108,16 @@ process.on("unhandledRejection", (err) => {
   console.error("[proxy] unhandled rejection (survived):", err && err.message ? err.message : err);
 });
 process.on("uncaughtException", (err) => {
+  // EADDRINUSE is the one exception to surviving. The reasoning below assumes the process can
+  // still SERVE — but a failed bind means nothing can ever reach it, while the sweep timers,
+  // upstream polling and archive writes all carry on regardless. Three of those accumulated
+  // locally in one session, each sweeping 1,081 airspaces and writing to a metered database while
+  // answering no requests at all. On Render that is compute allowance spent on nothing, with no
+  // signal that it is happening.
+  if (err && err.code === "EADDRINUSE") {
+    console.error(`[proxy] port ${PORT} is already in use — exiting rather than running headless`);
+    process.exit(1);
+  }
   // Deliberately kept alive. A half-broken proxy still serving five sources beats a dead one, and
   // Render's free tier takes ~50s to cold start a replacement.
   console.error("[proxy] uncaught exception (survived):", err && err.stack ? err.stack : err);
