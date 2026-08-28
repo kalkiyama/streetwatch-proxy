@@ -63,6 +63,14 @@ async function peeringdb() {
     // somewhere invented — geocoding the address would guess, and a guessed position on a map
     // of physical infrastructure is worse than an absent one.
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) continue;
+    // PeeringDB publishes two placeholder records — "PeeringDB Example Facility North" and
+    // "South", both at the same Antarctic coordinate — and they appeared on the map as real
+    // facilities, which is where the "Antarctica (2)" entry in the country filter came from.
+    //
+    // Excluding them is not a departure from "show everything, merge nothing". That rule is about
+    // preserving genuine disagreement between independent sources; a documented test record is not
+    // a disagreement, and reproducing an upstream's scaffolding faithfully is not honesty.
+    if (/peeringdb example/i.test(f.name || "") || /example organization/i.test(f.org_name || "")) continue;
     out.push({
       src: "peeringdb",
       srcId: `pdb:${f.id}`,
