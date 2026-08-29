@@ -22,10 +22,10 @@ jobs:
     # The crawl walks twelve countries with 25-second pauses plus a possible 60-second retry each.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Build the list
         env:
