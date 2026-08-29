@@ -1,0 +1,59 @@
+name: Refresh data centres
+
+# Monthly, and on demand. Data centres do not move, and both upstreams are free services that
+# rate-limit hard — PeeringDB throttles anonymous callers for an hour and Overpass blocked this
+# project's IP for hours after twelve queries four seconds apart. Monthly is generous for data
+# that changes when someone builds a building.
+#
+# WHY A SCHEDULED COMMIT RATHER THAN A RUNTIME FETCH. Render's filesystem is ephemeral and the
+# service restarts often, so anything written at runtime is lost; and depending on Overpass per
+# request would fail constantly for visitors. Committing the file means the proxy has no runtime
+# dependency on either upstream, and `git diff` shows exactly what changed between refreshes —
+# which is a property no live fetch gives you.
+on:
+  schedule:
+    # 04:00 UTC on the 1st. Quiet hours for Overpass, which is a shared volunteer service.
+    - cron: "0 4 1 * *"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # The crawl walks twelve countries with 25-second pauses plus a possible 60-second retry each.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build the list
+        env:
+          PEERINGDB_KEY: ${{ secrets.PEERINGDB_KEY }}
+        run: node build-datacenters.js
+
+      # A REFUSED UPSTREAM MUST NOT SILENTLY SHRINK THE MAP. If Overpass is down, the script still
+      # succeeds and writes a file with only the PeeringDB records — committing that would quietly
+      # delete 3,473 facilities and nobody would know until someone noticed Amazon had vanished.
+      - name: Refuse a suspiciously small result
+        run: |
+          NEW=$(node -e "console.log(require('./datacenters.json').total)")
+          OLD=$(git show HEAD:datacenters.json | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).total))")
+          echo "previous: $OLD  new: $NEW"
+          if [ "$NEW" -lt $((OLD * 80 / 100)) ]; then
+            echo "::error::New list is $NEW against $OLD — more than 20% smaller. An upstream probably failed; not committing."
+            exit 1
+          fi
+
+      - name: Commit if anything changed
+        run: |
+          if git diff --quiet datacenters.json; then
+            echo "no change"
+            exit 0
+          fi
+          git config user.name "streetwatch-bot"
+          git config user.email "bot@streetwatch.earth"
+          COUNT=$(node -e "console.log(require('./datacenters.json').total.toLocaleString('en-US'))")
+          git add datacenters.json
+          git commit -m "datacentres: scheduled refresh — $COUNT facilities"
+          git push
