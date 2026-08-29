@@ -151,6 +151,54 @@ out center tags;`;
   return out;
 }
 
+// ── Submarine cables ────────────────────────────────────────────────────────
+// The physical internet, on the same map as the buildings it connects.
+//
+// WHY OSM RATHER THAN TELEGEOGRAPHY. TeleGeography's map is the canonical one and tracks roughly
+// 570 active systems against OSM's 199 — but it is CC BY-NC-SA, and NonCommercial plus ShareAlike
+// does not fit a publicly deployed app whose other data is ODbL. They also state plainly that
+// their routes are STYLISED and do not reflect the actual path taken, which for a map that
+// distinguishes an MLAT estimate from a broadcast fix is its own problem. OSM is less complete and
+// honestly licensed; that is the trade, and the app says so.
+//
+// EVERY SEGMENT IS KEPT, named or not. Only 274 of 656 ways carry a name — but an unnamed cable is
+// still a cable somebody surveyed, and dropping the other 382 would hide real coverage to make the
+// layer look tidier. Same reasoning as the data centre records with no operator tag.
+async function cables() {
+  process.stdout.write("cables    : fetching… ");
+  const q = `[out:json][timeout:180];
+way["submarine"="yes"]["communication"~"line|optical_fiber"];
+out geom tags;`;
+  const r = await fetch(OVERPASS, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "streetwatch.earth data centre map (one-off monthly build)",
+    },
+    body: "data=" + encodeURIComponent(q),
+  });
+  const text = await r.text();
+  if (text.trim().startsWith("<")) throw new Error("overpass returned an error page (server busy)");
+  const j = JSON.parse(text);
+  const out = [];
+  for (const e of j.elements || []) {
+    if (!e.geometry || e.geometry.length < 2) continue;
+    const t = e.tags || {};
+    out.push({
+      srcId: `osm:way/${e.id}`,
+      name: t.name || t["name:en"] || null,
+      operator: t.operator || null,
+      // Coordinates as [lat, lon] pairs, matching what Leaflet's polyline expects, so the client
+      // draws them without a conversion step.
+      line: e.geometry.map((g) => [g.lat, g.lon]),
+      ref: `https://www.openstreetmap.org/way/${e.id}`,
+      wikipedia: t.wikipedia || null,
+    });
+  }
+  console.log(`${out.length} segments · ${new Set(out.map((c) => c.name).filter(Boolean)).size} named systems`);
+  return out;
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 (async () => {
   const records = [];
@@ -195,6 +243,14 @@ out center tags;`;
     await sleep(25000);
   }
 
+  let cableRows = [];
+  try {
+    await sleep(25000);
+    cableRows = await cables();
+  } catch (e) {
+    console.log("cables    : FAILED —", e.message);
+  }
+
   const payload = {
     built: new Date().toISOString(),
     note: "One record per SOURCE entry. Records are never merged: the same site may appear more "
@@ -209,6 +265,13 @@ out center tags;`;
     counts: bySource,
     total: records.length,
     records,
+    cableNote: "Submarine cables as mapped in OpenStreetMap. Roughly a third of the world's active "
+             + "systems are mapped there, and fewer than half the segments carry a name — the "
+             + "unnamed ones are drawn anyway, because a cable nobody has labelled is still a "
+             + "cable somebody surveyed. Routes are as contributors drew them, not surveyed "
+             + "positions.",
+    cableCount: cableRows.length,
+    cables: cableRows,
   };
 
   fs.writeFileSync(OUT, JSON.stringify(payload));
