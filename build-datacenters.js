@@ -110,7 +110,12 @@ area["ISO3166-1"="${iso}"]->.a;
 out center tags;`;
   const r = await fetch(OVERPASS, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    // Overpass asks clients to identify themselves so operators can contact a heavy user rather
+    // than simply blocking them. Node's fetch sends a minimal User-Agent by default.
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "streetwatch.earth data centre map (one-off monthly build)",
+    },
     body: "data=" + encodeURIComponent(q),
   });
   if (!r.ok) throw new Error(`overpass ${r.status}`);
@@ -162,17 +167,32 @@ out center tags;`;
   console.log("\nopenstreetmap (one country at a time; a global query is refused as too heavy):");
   for (const [iso, label] of COUNTRIES) {
     process.stdout.write(`  ${label.padEnd(16)} `);
-    try {
-      const rows = await osmCountry(iso, label);
+    // ONE retry, after a long wait. "Server busy" is the normal state of a free shared endpoint
+    // rather than an exceptional one, and abandoning a country on the first refusal loses data
+    // that a minute's patience would have collected.
+    let rows = null;
+    for (let attempt = 1; attempt <= 2 && rows === null; attempt++) {
+      try {
+        rows = await osmCountry(iso, label);
+      } catch (e) {
+        if (attempt === 2) { console.log(`FAILED — ${e.message}`); break; }
+        process.stdout.write(`busy, waiting 60s… `);
+        await sleep(60000);
+      }
+    }
+    if (rows) {
       records.push(...rows);
       bySource[`osm:${iso}`] = rows.length;
       console.log(`${rows.length}`);
-    } catch (e) {
-      console.log(`FAILED — ${e.message}`);
     }
-    // Overpass is a free shared service. Pausing between countries is the difference between being
-    // a considerate consumer and being throttled.
-    await sleep(4000);
+    // 25 SECONDS, not 4. The first run fired twelve queries four seconds apart and got the IP
+    // blocked outright — both overpass-api.de and the kumi.systems mirror refused connections
+    // afterwards, which took hours to clear. Overpass runs two query slots per client with a
+    // cooldown, so a pause shorter than a typical query's own runtime is asking to be cut off.
+    //
+    // A dozen countries at 25s is about five minutes of waiting. That is the correct price for
+    // using someone else's free service.
+    await sleep(25000);
   }
 
   const payload = {
