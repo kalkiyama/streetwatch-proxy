@@ -151,6 +151,111 @@ out center tags;`;
   return out;
 }
 
+// ── DataCentersExposed ──────────────────────────────────────────────────────
+// A third source, and a different KIND of record from the other two.
+//
+// PeeringDB lists facilities that sell interconnection. OpenStreetMap has buildings somebody
+// surveyed. DataCentersExposed traces campuses through regulatory filings, company registers and
+// national energy regulators — which is why it carries the two fields this map has shown as
+// "unknown" on every record since it was built: POWER IN MEGAWATTS, and water.
+//
+// ODbL, the same licence as the OSM data beside it, so the share-alike obligation is not new.
+// Free CSV, no key, regenerated daily. Attribution is required and is rendered in the app.
+//
+// NOTHING IS MATCHED TO EXISTING RECORDS. The obvious move — find our Equinix Ashburn building and
+// stamp their capacity onto it — is exactly the merge this file has refused from the start. Their
+// rows are CAMPUS-level and ours are BUILDING-level: one "Amazon Northern Virginia, 400MW" would
+// match thirteen separate Amazon buildings in Sterling, and applying it to each would invent
+// 5,200MW. So these are added as their own records and the app shows both, the same way it already
+// shows Centersquare as three OSM buildings and two PeeringDB facilities without deciding which
+// framing is correct.
+//
+// THE MAPPED ROWS ARE SKIPPED. About 5,500 of their 6,138 are status "mapped" — single-source,
+// no capacity, and their slugs show they come from PeeringDB, which this file already carries in
+// full. Adding them would be 5,500 near-duplicates carrying nothing new.
+//
+// WHAT IS KEPT IS NOT ALL REAL, and that is the point. Only 216 are operating. 203 are PROPOSALS
+// that may never be built, 19 were BLOCKED and 18 WITHDRAWN. Every record therefore carries its
+// status, and the app must draw a proposal differently from a building — a map that shows a
+// planning application the same way it shows a data centre is asserting something false.
+const DCX_CSV = "https://datacentersexposed.com/data/facilities.csv";
+const DCX_KEEP = new Set(["operating", "under_construction", "proposed", "permitted", "blocked", "withdrawn"]);
+
+function parseCsv(text) {
+  // Their export opens with a "#" comment line before the header.
+  const lines = text.split("\n").filter((l) => l.length && !l.startsWith("#"));
+  const head = splitRow(lines[0]);
+  return lines.slice(1).map((l) => {
+    const cells = splitRow(l);
+    const o = {};
+    head.forEach((h, i) => { o[h] = (cells[i] || "").trim(); });
+    return o;
+  });
+}
+
+// Minimal quoted-CSV split. Facility names contain commas ("Meta Hyperion, Richland Parish") and
+// a naive split on "," would shift every column after them.
+function splitRow(line) {
+  const out = [];
+  let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+    else if (c === "," && !q) { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+async function dcx() {
+  process.stdout.write("dcx       : fetching… ");
+  const r = await fetch(DCX_CSV, {
+    headers: { "User-Agent": "streetwatch.earth data centre map (one-off monthly build)" },
+  });
+  if (!r.ok) throw new Error(`dcx ${r.status}`);
+  const rows = parseCsv(await r.text());
+  const out = [];
+  for (const f of rows) {
+    if (!DCX_KEEP.has(f.status)) continue;
+    const lat = Number(f.lat), lon = Number(f.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) continue;
+    const mw = Number(f.power_mw);
+    out.push({
+      src: "dcx",
+      srcId: `dcx:${f.slug}`,
+      name: f.name || null,
+      operator: f.operator || null,
+      // The corporate owner behind the operator, which neither other source carries.
+      parent: f.ultimate_parent || null,
+      lat, lon,
+      address: null,
+      city: f.city || null,
+      state: f.state || null,
+      country: "US",
+      status: f.status,
+      // FINALLY a real number in the field that has said "unknown" on every record until now.
+      powerMw: Number.isFinite(mw) && mw > 0 ? mw : null,
+      waterGpd: f.water_gpd ? Number(f.water_gpd) || null : null,
+      sqft: f.square_footage ? Number(f.square_footage) || null : null,
+      year: f.year_operational || null,
+      // high / medium / low. They require two independent sources before calling something
+      // "operating"; single-source rows are "mapped" and are skipped above. Carried through
+      // rather than flattened, because a medium-confidence 11GW proposal and a high-confidence
+      // operating site are not the same claim.
+      confidence: f.confidence || null,
+      voltage: null, substations: null, networks: null,
+      url: null,
+      ref: f.source_url || f.url || null,
+    });
+  }
+  const counts = {};
+  out.forEach((x) => { counts[x.status] = (counts[x.status] || 0) + 1; });
+  console.log(`${out.length} campuses · ${out.filter((x) => x.powerMw).length} with capacity · `
+    + Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(", "));
+  return out;
+}
+
 // ── Submarine cables ────────────────────────────────────────────────────────
 // The physical internet, on the same map as the buildings it connects.
 //
@@ -243,6 +348,14 @@ out geom tags;`;
     await sleep(25000);
   }
 
+  try {
+    const rows = await dcx();
+    records.push(...rows);
+    bySource.dcx = rows.length;
+  } catch (e) {
+    console.log("dcx       : FAILED —", e.message);
+  }
+
   let cableRows = [];
   try {
     await sleep(25000);
@@ -261,6 +374,9 @@ out geom tags;`;
     sources: {
       peeringdb: "https://www.peeringdb.com — operator-maintained, CC-BY 4.0",
       osm: "https://www.openstreetmap.org — contributor-mapped, ODbL",
+      dcx: "https://datacentersexposed.com — campuses traced through regulatory filings and "
+         + "energy regulators, ODbL. \u00a9 DataCentersExposed contributors. Includes PROPOSED, "
+         + "BLOCKED and WITHDRAWN sites, which do not exist and are marked as such.",
     },
     counts: bySource,
     total: records.length,
