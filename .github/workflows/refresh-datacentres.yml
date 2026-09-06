@@ -12,8 +12,13 @@ name: Refresh data centres
 # which is a property no live fetch gives you.
 on:
   schedule:
-    # 04:00 UTC on the 1st. Quiet hours for Overpass, which is a shared volunteer service.
-    - cron: "0 4 1 * *"
+    # WEEKLY, not monthly. Facility coordinates barely move and monthly was generous for them —
+    # but planning decisions land continuously, and the status changes are the point now. Monthly
+    # meant a blocked proposal could be approved and sit unnoticed for four weeks, which defeats a
+    # feature whose whole value is recency.
+    #
+    # 04:00 UTC Sunday: quiet hours for Overpass, a shared volunteer service.
+    - cron: "0 4 * * 0"
   workflow_dispatch:
 
 jobs:
