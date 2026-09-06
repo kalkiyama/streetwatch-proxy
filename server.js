@@ -80,6 +80,7 @@ const airfields = require("./airfields.js");
 const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
 const cyber = require("./cyber-proxy.js");
+const navwarn = require("./navwarnings.js");
 
 // Data centres, read from a COMMITTED FILE rather than fetched. The upstreams (PeeringDB, and
 // OpenStreetMap via Overpass) are rate-limited free services that both refused us during a single
@@ -687,6 +688,19 @@ async function route(req, res) {
 
   if (p === "/api/archive/stats") return send(res, 200, await archive.stats(), origin);
 
+  // Navigational warnings. Deliberately NOT its own tab: of 386 active warnings worldwide only
+  // about 27 are relevant here, and a panel that is usually empty teaches people not to open it.
+  // Each warning is shown where its subject already lives — cable work beside the cables, declared
+  // danger areas beside the airspace advisories.
+  if (p === "/api/navwarnings") {
+    try {
+      return send(res, 200, await navwarn.fetchWarnings(), origin);
+    } catch (e) {
+      console.error("[navwarn] upstream error:", (e && e.message) || e);
+      return send(res, 502, { error: "upstream_unavailable" }, origin);
+    }
+  }
+
   // Every watched site with its week-over-week change. Separate from /api/ai/digest, which stays a
   // top-8 summary because a briefing over 394 sites is not a briefing.
   if (p === "/api/drones/sites-activity") {
@@ -735,7 +749,7 @@ async function route(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/sites-activity", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres",
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/sites-activity", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres", "/api/navwarnings",
       "/api/cyber/kev",
       "/api/cyber/outages",
       "/api/webcams", "/health", "/metrics"] }, origin);
