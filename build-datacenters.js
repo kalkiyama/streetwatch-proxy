@@ -232,7 +232,18 @@ async function dcx() {
       address: null,
       city: f.city || null,
       state: f.state || null,
-      country: "US",
+      // NOT hardcoded "US", which is what this was and what made the panel claim that 数字北京 in
+      // Beijing and CtrlS Chennai were in the United States. Their export is LABELLED a US export
+      // and is not one — it carries foreign sites with the state column left blank, and there is
+      // no country field to read.
+      //
+      // A US bounding box is a crude test and it is meant to be: the alternative on offer was an
+      // assumption that was simply wrong. Anything outside it is left NULL rather than guessed at,
+      // so the app says "country unknown" instead of naming the wrong one.
+      country: (lat > 24 && lat < 50 && lon > -125 && lon < -66) ? "US"
+             : (lat > 51 && lat < 72 && lon > -168 && lon < -129) ? "US"   // Alaska
+             : (lat > 18 && lat < 23 && lon > -161 && lon < -154) ? "US"   // Hawaii
+             : null,
       status: f.status,
       // FINALLY a real number in the field that has said "unknown" on every record until now.
       powerMw: Number.isFinite(mw) && mw > 0 ? mw : null,
