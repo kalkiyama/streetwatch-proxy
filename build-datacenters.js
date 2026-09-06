@@ -315,6 +315,54 @@ out geom tags;`;
   return out;
 }
 
+// ── What changed since the last build ───────────────────────────────────────
+// Half the DataCentersExposed records are places that do not exist — proposals, sites under
+// construction, and 109 that were refused or abandoned. Those statuses MOVE: a blocked proposal
+// gets approved on appeal, an operating site is decommissioned, a plan is withdrawn after
+// opposition. Every build has silently overwritten the old status with the new one, so the fact
+// that something changed was visible only in a git diff of a 4.5MB file.
+//
+// This reads the PREVIOUS build before overwriting it and records what moved. Nothing else on the
+// internet shows a planning decision reversing on a map.
+//
+// WHY IN THE FILE RATHER THAN A DATABASE. The file is already downloaded by every visitor, the
+// history is small (a few dozen changes a build), and Neon's compute allowance is the tightest
+// constraint in this project. A changelog that costs nothing to serve beats one that costs a
+// query.
+//
+// 90 DAYS, then dropped. A status change is interesting while it is recent; a two-year-old
+// approval is just the current status.
+const CHANGE_RETAIN_DAYS = 90;
+
+function statusChanges(previous, current) {
+  if (!previous || !Array.isArray(previous.records)) return [];
+  const was = {};
+  previous.records.forEach((r) => { if (r.status) was[r.srcId] = r.status; });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const found = [];
+  current.forEach((r) => {
+    if (!r.status) return;
+    const before = was[r.srcId];
+    // A record appearing for the first time is not a change — it is a new record, and calling it
+    // "changed from nothing" would fill the list with noise on the first build after any source
+    // is added.
+    if (!before || before === r.status) return;
+    found.push({
+      srcId: r.srcId,
+      name: r.name || null,
+      operator: r.operator || null,
+      lat: r.lat, lon: r.lon,
+      from: before,
+      to: r.status,
+      powerMw: r.powerMw || null,
+      on: today,
+      ref: r.ref || null,
+    });
+  });
+  return found;
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 (async () => {
   const records = [];
@@ -375,6 +423,19 @@ out geom tags;`;
     console.log("cables    : FAILED —", e.message);
   }
 
+  // The previous build, if there is one. On a first run there is nothing to compare against and
+  // the change list is simply empty — which is correct, not a failure.
+  let previous = null;
+  try { previous = JSON.parse(fs.readFileSync(OUT, "utf8")); } catch { /* first run */ }
+
+  const fresh = statusChanges(previous, records);
+  const cutoff = new Date(Date.now() - CHANGE_RETAIN_DAYS * 86400000).toISOString().slice(0, 10);
+  const carried = ((previous && previous.changes) || []).filter((c) => c.on >= cutoff);
+  // Newest first, and a record that changed twice keeps both entries — "proposed to blocked to
+  // approved" is a more interesting history than the endpoint alone.
+  const changes = [...fresh, ...carried].sort((a, b) => (a.on < b.on ? 1 : -1));
+  if (fresh.length) console.log(`changes   : ${fresh.length} status changes since the last build`);
+
   const payload = {
     built: new Date().toISOString(),
     note: "One record per SOURCE entry. Records are never merged: the same site may appear more "
@@ -397,6 +458,11 @@ out geom tags;`;
              + "unnamed ones are drawn anyway, because a cable nobody has labelled is still a "
              + "cable somebody surveyed. Routes are as contributors drew them, not surveyed "
              + "positions.",
+    changeNote: `Status changes recorded between builds, kept for ${CHANGE_RETAIN_DAYS} days. A `
+              + "record appearing for the first time is not listed as a change. Statuses come from "
+              + "DataCentersExposed, which traces them through regulatory filings.",
+    changeCount: changes.length,
+    changes,
     cableCount: cableRows.length,
     cables: cableRows,
   };
