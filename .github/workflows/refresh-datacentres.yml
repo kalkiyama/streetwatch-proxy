@@ -45,6 +45,17 @@ jobs:
           NEW=$(node -e "console.log(require('./datacenters.json').total)")
           OLD=$(git show HEAD:datacenters.json | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).total))")
           echo "previous: $OLD  new: $NEW"
+          # CABLES TOO. The guard watched `total` only, so when an Overpass timeout produced an
+          # empty cable array the facility count was unchanged and the commit went through — 656
+          # segments disappeared from the map silently, and nobody noticed for days. A guard that
+          # watches one field of several is a guard against one failure of several.
+          NEWC=$(node -e "console.log(require('./datacenters.json').cableCount || 0)")
+          OLDC=$(git show HEAD:datacenters.json | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).cableCount||0))")
+          echo "cables previous: $OLDC  new: $NEWC"
+          if [ "$OLDC" -gt 100 ] && [ "$NEWC" -lt $((OLDC * 80 / 100)) ]; then
+            echo "::error::Cable segments fell from $OLDC to $NEWC — Overpass probably failed; not committing."
+            exit 1
+          fi
           if [ "$NEW" -lt $((OLD * 80 / 100)) ]; then
             echo "::error::New list is $NEW against $OLD — more than 20% smaller. An upstream probably failed; not committing."
             exit 1
