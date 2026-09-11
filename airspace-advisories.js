@@ -230,6 +230,51 @@ const ADVISORIES = [
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;   // 6h: these change on the order of days, not minutes
 const sourceState = new Map();                   // source URL -> { etag, lastModified, changed, checkedAt }
 
+// WATCHING FOR A NINETEENTH BULLETIN.
+//
+// checkSources() below asks each of the 18 compiled sources whether it has changed. It cannot
+// notice a document that did not exist when this list was written — a new conflict zone published
+// in August is invisible to a check that only looks at what July knew about.
+//
+// So these two index pages are fetched as well and their bulletin references counted. The count is
+// crude and deliberately so: the aim is not to parse a new bulletin, infer its region and add it,
+// which would mean automating exactly the judgement this file exists to apply by hand. The aim is
+// to say "the upstream lists more than we carry — go and look."
+//
+// A COUNT THAT CANNOT BE TRUSTED PRECISELY IS STILL USEFUL AS A FLOOR. Page markup changes and
+// this will occasionally miscount; it reports what it saw and what it expected, so a reader can
+// judge the discrepancy rather than being handed a verdict.
+const INDEX_PAGES = [
+  { id: "easa", url: "https://www.easa.europa.eu/en/domains/air-operations/czibs",
+    label: "EASA Conflict Zone Information Bulletins",
+    // CZIB references look like "CZIB-2024-01". Counting distinct identifiers rather than links,
+    // because the page repeats each one in a list and a detail panel.
+    re: /CZIB[-\s]?\d{4}[-\s]?\d{2}/gi },
+  { id: "faa", url: "https://www.faa.gov/air_traffic/publications/us_restrictions",
+    label: "FAA flight prohibitions and advisories",
+    re: /SFAR\s?No\.?\s?\d{2,3}|NOTAM\s?[A-Z]?\d{4}\/\d{2}/gi },
+];
+
+let indexState = [];
+
+async function checkIndexes() {
+  indexState = await Promise.all(INDEX_PAGES.map(async (p) => {
+    try {
+      const res = await fetch(p.url, { redirect: "follow" });
+      if (!res.ok) return { id: p.id, label: p.label, url: p.url, ok: false };
+      const body = await res.text();
+      const found = new Set((body.match(p.re) || []).map((x) => x.replace(/\s+/g, "").toUpperCase()));
+      return {
+        id: p.id, label: p.label, url: p.url, ok: true,
+        upstreamCount: found.size,
+        checkedAt: new Date().toISOString(),
+      };
+    } catch {
+      return { id: p.id, label: p.label, url: p.url, ok: false };
+    }
+  }));
+}
+
 async function checkSources() {
   const urls = [...new Set(ADVISORIES.map((a) => a.source))];
   await Promise.all(urls.map(async (url) => {
@@ -256,7 +301,11 @@ let timer = null;
 function start() {
   if (timer) return;
   checkSources().catch(() => {});
-  timer = setInterval(() => checkSources().catch(() => {}), CHECK_INTERVAL_MS);
+  checkIndexes().catch(() => {});
+  timer = setInterval(() => {
+    checkSources().catch(() => {});
+    checkIndexes().catch(() => {});
+  }, CHECK_INTERVAL_MS);
   if (timer.unref) timer.unref();
 }
 
@@ -266,6 +315,16 @@ function list() {
   return {
     compiledOn: COMPILED_ON,
     compiledAgeDays: ageDays,
+    // What the upstream indexes advertise against what is compiled here. Reported as both numbers
+    // rather than as a boolean, because "EASA lists 21, we carry 18" is checkable and "possibly
+    // incomplete" is not.
+    indexes: indexState.filter((x) => x.ok).map((x) => ({
+      source: x.label, url: x.url, upstreamCount: x.upstreamCount, checkedAt: x.checkedAt,
+    })),
+    // A COUNT, NOT A VERDICT. The upstream total includes bulletins this list deliberately does not
+    // carry — withdrawn ones, and regions covered under a combined entry. A higher number upstream
+    // means go and look, not that something is missing.
+    mayBeIncomplete: indexState.some((x) => x.ok && x.upstreamCount > ADVISORIES.length),
     checkIntervalHours: CHECK_INTERVAL_MS / 3600000,
     notice:
       "NOT FOR FLIGHT PLANNING. These are advisories and prohibitions issued by aviation authorities " +
