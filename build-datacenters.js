@@ -245,6 +245,14 @@ async function dcx() {
              : (lat > 18 && lat < 23 && lon > -161 && lon < -154) ? "US"   // Hawaii
              : null,
       status: f.status,
+      // WHAT KIND OF FACILITY, as the source classifies it: colocation, hyperscale, edge, crypto,
+      // or unknown — and unknown is the largest category at 2,982 of 6,138.
+      //
+      // Note what is NOT here: an "AI" type. The export is headed "AI data center export" and the
+      // classification does not claim to identify AI workloads, because nobody can from outside. A
+      // hyperscale campus might be training models or serving email. Carried as the source states
+      // it and no further.
+      type: f.type || null,
       // FINALLY a real number in the field that has said "unknown" on every record until now.
       powerMw: Number.isFinite(mw) && mw > 0 ? mw : null,
       waterGpd: f.water_gpd ? Number(f.water_gpd) || null : null,
