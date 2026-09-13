@@ -536,6 +536,46 @@ async function lastSeenBySite({ days = 30 } = {}) {
 // CACHED FOR AN HOUR. This is a 423,000-row aggregate over a database on a metered free tier, and
 // a week's activity does not change meaningfully between page loads.
 let _saCache = null;
+// Strategic-asset sightings for the watch panel. Lives here rather than in strategic.js because
+// every other database read in this project does: the pool, the retry handling and the try/catch
+// discipline that an August crash established all belong to one module, and a second file holding
+// its own connection would be a second place for that to be got wrong.
+//
+// ONE ROW PER AIRFRAME, not per observation. A bomber seen forty times is one flight, and forty
+// rows would read as forty bombers.
+async function strategicSightings({ minutes = 1440, codes = [] } = {}) {
+  if (!isReady() || !codes.length) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT icao,
+              (array_agg(type_code ORDER BY ts DESC))[1] AS type_code,
+              (array_agg(callsign  ORDER BY ts DESC))[1] AS callsign,
+              (array_agg(site      ORDER BY ts ASC ))[1] AS first_site,
+              (array_agg(site      ORDER BY ts DESC))[1] AS last_site,
+              (array_agg(country   ORDER BY ts DESC))[1] AS country,
+              (array_agg(lat       ORDER BY ts DESC))[1] AS lat,
+              (array_agg(lon       ORDER BY ts DESC))[1] AS lon,
+              (array_agg(heading   ORDER BY ts DESC))[1] AS heading,
+              (array_agg(alt_ft    ORDER BY ts DESC))[1] AS alt_ft,
+              MIN(ts) AS first_seen, MAX(ts) AS last_seen,
+              COUNT(*) AS observations,
+              -- How many WATCHED AIRSPACES picked it up. One radar is one receiver's word; five
+              -- means it crossed five watched areas.
+              COUNT(DISTINCT site) AS sites
+         FROM drone_tracks
+        WHERE ts > now() - ($1 || ' minutes')::interval
+          AND type_code = ANY($2)
+        GROUP BY icao
+        ORDER BY MAX(ts) DESC`,
+      [String(minutes), codes]
+    );
+    return rows;
+  } catch (e) {
+    console.error("[archive] strategicSightings failed:", e.message);
+    return null;
+  }
+}
+
 async function sitesActivity({ days = 7 } = {}) {
   if (!isReady()) return null;
   const d = String(days);
@@ -1074,6 +1114,7 @@ async function opsLastRun() {
 
 module.exports = {
   sitesActivity,
+  strategicSightings,
   ageHours,
   multiStop,
   coverage, init, record, flush, history, track, heat, stats, lastSeenBySite, digestData, isReady, RETAIN_DAYS,

@@ -81,6 +81,7 @@ const archive = require("./archive.js");
 const webcams = require("./webcams-proxy.js");
 const cyber = require("./cyber-proxy.js");
 const navwarn = require("./navwarnings.js");
+const strategic = require("./strategic.js");
 
 // Data centres, read from a COMMITTED FILE rather than fetched. The upstreams (PeeringDB, and
 // OpenStreetMap via Overpass) are rate-limited free services that both refused us during a single
@@ -692,6 +693,23 @@ async function route(req, res) {
   // about 27 are relevant here, and a panel that is usually empty teaches people not to open it.
   // Each warning is shown where its subject already lives — cable work beside the cables, declared
   // danger areas beside the airspace advisories.
+  // Strategic-asset watch. The window is the caller's: the client offers 6h through 90d, because a
+  // bomber sighting is rare enough that an empty six hours is normal and says nothing.
+  if (p === "/api/strategic") {
+    const u = new URL(req.url, "http://localhost");
+    const minutes = Math.min(129600, Math.max(60, parseInt(u.searchParams.get("minutes") || "1440", 10) || 1440));
+    try {
+      const live = typeof droneSweep.subSupport === "function" ? droneSweep.subSupport() : null;
+      const sightings = await archive.strategicSightings({ minutes, codes: strategic.CODES });
+      const data = await strategic.strategic({ minutes, sightings });
+      if (live && Array.isArray(live)) data.vessels = live;
+      return send(res, 200, data, origin);
+    } catch (e) {
+      console.error("[strategic] failed:", (e && e.message) || e);
+      return send(res, 503, { error: "unavailable" }, origin);
+    }
+  }
+
   if (p === "/api/navwarnings") {
     try {
       return send(res, 200, await navwarn.fetchWarnings(), origin);
@@ -749,7 +767,7 @@ async function route(req, res) {
   }
   // The old hardcoded list was written early and never updated, so a 404 advertised five
   // routes while a dozen others worked — a small dishonesty in the error path itself.
-  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/sites-activity", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres", "/api/navwarnings",
+  return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/sites-activity", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres", "/api/navwarnings", "/api/strategic",
       "/api/cyber/kev",
       "/api/cyber/outages",
       "/api/webcams", "/health", "/metrics"] }, origin);
