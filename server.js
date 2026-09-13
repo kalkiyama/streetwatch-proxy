@@ -82,6 +82,7 @@ const webcams = require("./webcams-proxy.js");
 const cyber = require("./cyber-proxy.js");
 const navwarn = require("./navwarnings.js");
 const strategic = require("./strategic.js");
+const ioda = require("./ioda.js");
 
 // Data centres, read from a COMMITTED FILE rather than fetched. The upstreams (PeeringDB, and
 // OpenStreetMap via Overpass) are rate-limited free services that both refused us during a single
@@ -695,6 +696,19 @@ async function route(req, res) {
   // danger areas beside the airspace advisories.
   // Strategic-asset watch. The window is the caller's: the client offers 6h through 90d, because a
   // bomber sighting is rare enough that an empty six hours is normal and says nothing.
+  // Internet outages by country. Beside the Cloudflare flows rather than replacing them: one
+  // measures where hostile traffic CAME FROM, this measures where traffic STOPPED.
+  if (p === "/api/cyber/outages-ioda") {
+    const u = new URL(req.url, "http://localhost");
+    const days = Math.min(30, Math.max(1, parseInt(u.searchParams.get("days") || "7", 10) || 7));
+    try {
+      return send(res, 200, await ioda.outages({ days }), origin);
+    } catch (e) {
+      console.error("[ioda] upstream error:", (e && e.message) || e);
+      return send(res, 502, { error: "upstream_unavailable" }, origin);
+    }
+  }
+
   if (p === "/api/strategic") {
     const u = new URL(req.url, "http://localhost");
     const minutes = Math.min(129600, Math.max(60, parseInt(u.searchParams.get("minutes") || "1440", 10) || 1440));
@@ -769,7 +783,7 @@ async function route(req, res) {
   // routes while a dozen others worked — a small dishonesty in the error path itself.
   return send(res, 404, { error: "not_found", routes: ["/api/", "/api/ai/", "/api/ai/correlations", "/api/ai/digest", "/api/ai/search", "/api/ai/status", "/api/ai/track", "/api/aircraft", "/api/airspace/advisories", "/api/archive/stats", "/api/drones", "/api/drones/coverage", "/api/drones/heat", "/api/drones/sites-activity", "/api/drones/history", "/api/drones/multistop", "/api/drones/operations", "/api/drones/sites", "/api/drones/track", "/api/subsupport", "/api/usv", "/api/vessels", "/api/cyber/flows", "/api/datacentres", "/api/navwarnings", "/api/strategic",
       "/api/cyber/kev",
-      "/api/cyber/outages",
+      "/api/cyber/outages", "/api/cyber/outages-ioda",
       "/api/webcams", "/health", "/metrics"] }, origin);
 }
 
