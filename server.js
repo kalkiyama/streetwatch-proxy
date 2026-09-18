@@ -782,7 +782,16 @@ async function route(req, res) {
         c.lat >= s0 && c.lat <= n0 && c.lon >= w0 && c.lon <= e0);
       // The TOTAL is returned alongside the window, so a client showing 400 of 139,524 can say so
       // rather than implying the window is the world.
-      return send(res, 200, { ...CAMERAS, cameras: inside, count: inside.length, total: CAMERAS.count }, origin);
+      // countOnly answers "how many are here" without shipping them. A client zoomed out wants the
+      // number — it cannot draw 40,000 points and should not download them to find that out.
+      const countOnly = u.searchParams.get("countOnly") === "1";
+      return send(res, 200, {
+        ...CAMERAS,
+        cameras: countOnly ? [] : inside,
+        count: inside.length,
+        total: CAMERAS.count,
+        countOnly,
+      }, origin);
     }
     return send(res, 200, { ...CAMERAS, total: CAMERAS.count }, origin);
   }
