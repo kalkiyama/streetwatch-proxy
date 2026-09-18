@@ -5,7 +5,11 @@
  * RUN:  cd ~/streetwatch-proxy
  *       export $(grep -v '^#' .env.local | xargs)
  *       node discover-airfields.js --days 90 --min-events 3 > /tmp/clusters.txt
- *       node screen-clusters.js /tmp/clusters.txt
+ *       node screen-clusters.js /tmp/clusters.txt --days 90
+ *
+ *       Pass the SAME --days to both. Screening a 90-day cluster against all of history counts
+ *       stops the cluster was never evidence for; screening against a shorter window counts fewer
+ *       stops than the cluster earned. Either way the two halves stop describing the same place.
  *
  * WHY. The September run produced 130 clusters with no catalogued airfield within 3nm. Every one
  * was a candidate and none had been examined, because examining one by hand took an afternoon and
@@ -38,9 +42,23 @@ const { Pool } = require("pg");
 const MIN_GAP_MIN = 3, MAX_GAP_MIN = 240, SAME_PLACE_NM = 1.5, STOPPED_KT = 10;
 const RADIUS_NM = 3;
 
-const file = process.argv[2];
+const args = process.argv.slice(2);
+const opt = (k, d) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : d; };
+
+// --days MUST match the --days that produced the file. The screening window and the discovery
+// window are the same window: a cluster flagged from 90 days of events has to be judged on those
+// 90 days, or the dwell count answers a question nobody asked. It is an argument rather than a
+// constant only because discover-airfields.js takes one.
+const DAYS = Number(opt("days", 90));
+if (!Number.isFinite(DAYS) || DAYS <= 0) {
+  console.error(`--days must be a positive number, got ${JSON.stringify(opt("days", null))}`);
+  process.exit(1);
+}
+
+const flagValues = new Set(args.filter((a, i) => i > 0 && args[i - 1].startsWith("--")));
+const file = args.find((a) => !a.startsWith("--") && !flagValues.has(a));
 if (!file || !fs.existsSync(file)) {
-  console.error("usage: node screen-clusters.js <discover-airfields output file>");
+  console.error("usage: node screen-clusters.js <discover-airfields output file> [--days 90]");
   process.exit(1);
 }
 
@@ -76,7 +94,8 @@ const nmBetween = (a, b, c, d) =>
   Math.hypot((a - c) * 60, (b - d) * 60 * Math.cos(((a + c) / 2 * Math.PI) / 180));
 
 (async () => {
-  console.log(`\nscreening ${clusters.length} unmatched clusters against the dwell test\n`);
+  console.log(`\nscreening ${clusters.length} unmatched clusters against the dwell test`);
+  console.log(`window: last ${DAYS} days — must match the --days that produced the file\n`);
 
   for (const c of clusters) {
     const dlat = RADIUS_NM / 60;
@@ -85,8 +104,9 @@ const nmBetween = (a, b, c, d) =>
       `SELECT icao, ts, lat, lon, speed_kt, callsign, type_code
          FROM drone_tracks
         WHERE lat BETWEEN $1 AND $2 AND lon BETWEEN $3 AND $4
+          AND ts > now() - ($5||' days')::interval
         ORDER BY icao, ts`,
-      [c.lat - dlat, c.lat + dlat, c.lon - dlon, c.lon + dlon]
+      [c.lat - dlat, c.lat + dlat, c.lon - dlon, c.lon + dlon, String(DAYS)]
     );
     const byIcao = {};
     rows.forEach((r) => { (byIcao[r.icao] = byIcao[r.icao] || []).push(r); });
@@ -147,10 +167,10 @@ const nmBetween = (a, b, c, d) =>
   });
   if (noStops.length > 15) console.log(`  … and ${noStops.length - 15} more`);
 
-  console.log("\nA stop is: a 3-240min gap, resuming within 1.5nm, with something under 10kt on one");
-  console.log("side of it. That is consistent with a landing and equally consistent with a");
-  console.log("helicopter holding a stationary hover. Verify with imagery before calling anything");
-  console.log("anything.\n");
+  console.log(`\nA stop is: a 3-240min gap in the last ${DAYS} days, resuming within 1.5nm, with`);
+  console.log("something under 10kt on one side of it. That is consistent with a landing and equally");
+  console.log("consistent with a helicopter holding a stationary hover. Verify with imagery before");
+  console.log("calling anything.\n");
 
   await pool.end();
 })();
