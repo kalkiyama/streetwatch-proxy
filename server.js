@@ -12,6 +12,11 @@
 //   const AIS_BACKEND_URL = "https://your-service.onrender.com";
 
 const http = require("http");
+// Needed by the cameras route, which reads its file on first request rather than at boot. The
+// catch there reported "missing on this instance" when the file was present and `fs` was not —
+// an error message describing the wrong absence.
+const fs = require("fs");
+const path = require("path");
 const adsb = require("./adsb-proxy.js");
 const ais = require("./ais-proxy.js");
 const droneSweep = require("./drone-sweep.js");
@@ -93,6 +98,8 @@ const ioda = require("./ioda.js");
 // Loaded once at startup. If it is missing the endpoint says so rather than pretending to be empty:
 // no data and zero data centres in the world are very different claims.
 let DATACENTRES = null;
+// Filled on first /api/cameras request rather than at boot — see the route.
+let CAMERAS = null;
 try {
   DATACENTRES = require("./datacenters.json");
   console.log(`[datacentres] ${DATACENTRES.total.toLocaleString()} records · built ${DATACENTRES.built.slice(0, 10)}`);
@@ -747,6 +754,39 @@ async function route(req, res) {
   // query per pan, and the client can then filter instantly without touching the network again.
   // Bounding-box filtering server-side was considered and rejected — it would mean a request on
   // every map movement to save a download that happens once.
+  // ALPR camera positions. Where the plate readers ARE — nothing here reads a camera or records
+  // what one saw, and nothing ever will: that is the line the whole project draws and a plate
+  // reader is the strongest case for it, because what these cameras collect is a record of where
+  // named individuals drove.
+  //
+  // LOADED ON FIRST REQUEST, not at startup. 17MB parsed into memory for a layer that is off by
+  // default would cost every instance that RAM whether anyone asks for it or not, and this runs on
+  // a free tier. The first caller waits ~300ms; nobody else does.
+  //
+  // BOUNDED BY BBOX where one is given. 139,524 points is more than any map can draw and more than
+  // a phone should download — the client asks for the window it is showing. Without a bbox the
+  // whole file is served, which is what a bulk consumer wants and what the licence encourages.
+  if (p === "/api/cameras") {
+    if (!CAMERAS) {
+      try {
+        CAMERAS = JSON.parse(fs.readFileSync(path.join(__dirname, "cameras.json"), "utf8"));
+      } catch {
+        return send(res, 503, { error: "not_built", detail: "cameras.json is missing on this instance." }, origin);
+      }
+    }
+    const u = new URL(req.url, "http://localhost");
+    const box = (u.searchParams.get("bbox") || "").split(",").map(Number);
+    if (box.length === 4 && box.every(Number.isFinite)) {
+      const [s0, w0, n0, e0] = box;
+      const inside = CAMERAS.cameras.filter((c) =>
+        c.lat >= s0 && c.lat <= n0 && c.lon >= w0 && c.lon <= e0);
+      // The TOTAL is returned alongside the window, so a client showing 400 of 139,524 can say so
+      // rather than implying the window is the world.
+      return send(res, 200, { ...CAMERAS, cameras: inside, count: inside.length, total: CAMERAS.count }, origin);
+    }
+    return send(res, 200, { ...CAMERAS, total: CAMERAS.count }, origin);
+  }
+
   if (p === "/api/datacentres" || p === "/api/datacenters") {
     if (!DATACENTRES)
       return send(res, 503, { error: "not_built", detail: "datacenters.json is missing on this instance." }, origin);
