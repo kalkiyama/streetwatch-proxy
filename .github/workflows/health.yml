@@ -1,0 +1,86 @@
+name: health
+
+# EVERY 15 MINUTES, AND IT CHECKS THE THINGS THAT HAVE ACTUALLY FAILED.
+#
+# Render's own health check passed throughout the Sep 17 outage. So did every curl test — five
+# straight 200s while all four proxy-backed tabs were dead in every browser on every device. The
+# proxy was answering perfectly and omitting one response header, and nothing that asks "is it up"
+# could see it.
+#
+# So this does not ask whether the service is up. It asks whether the site WORKS, in the specific
+# ways it has been observed to stop working:
+#
+#   1. CORS — a browser gets Access-Control-Allow-Origin for streetwatch.earth. This is the one
+#      that was silently wrong for hours. A blueprint sync reverted ALLOW_ORIGIN to a stale value
+#      and every response stayed 200.
+#   2. The sweep is sweeping — sites > 0 and a pass in progress. After a restart this reads zero
+#      for a few minutes, which is why the threshold is low rather than exact.
+#   3. The data endpoints answer with data, not just a status code.
+#   4. The site and its static pages load.
+#
+# A failure emails the repository owner through GitHub's own notifications. No new service, no
+# account, no third party holding a key.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CORS header for streetwatch.earth
+        run: |
+          # THE CHECK THAT WOULD HAVE CAUGHT SEP 17. curl does not enforce CORS, so it must be
+          # asserted explicitly: the header's ABSENCE is the failure, and the status code is 200
+          # either way.
+          H=$(curl -sI -H "Origin: https://streetwatch.earth" --max-time 25 \
+                "https://streetwatch-proxy.onrender.com/api/drones" \
+                | tr -d '\r' | grep -i "^access-control-allow-origin:" || true)
+          echo "header: ${H:-<none>}"
+          if [ -z "$H" ]; then
+            echo "::error::No Access-Control-Allow-Origin for streetwatch.earth — every browser is being refused. Check ALLOW_ORIGIN in render.yaml, which a blueprint sync can overwrite."
+            exit 1
+          fi
+          case "$H" in
+            *streetwatch.earth*|*"*"*) ;;
+            *) echo "::error::Allow-Origin present but does not cover streetwatch.earth: $H"; exit 1 ;;
+          esac
+
+      - name: Sweep is running
+        run: |
+          J=$(curl -s --max-time 30 "https://streetwatch-proxy.onrender.com/api/drones")
+          SITES=$(echo "$J" | python3 -c "import json,sys; print(json.load(sys.stdin).get('sweep',{}).get('sites') or 0)")
+          PASS=$(echo "$J" | python3 -c "import json,sys; print(json.load(sys.stdin).get('sweep',{}).get('passSize') or 0)")
+          echo "sites=$SITES pass=$PASS"
+          # Sites is a fixed list and should never shrink. Pass size varies with tier composition,
+          # so only zero is treated as broken — a restart legitimately reads low for a few minutes.
+          [ "$SITES" -ge 1000 ] || { echo "::error::sweep watching $SITES airspaces, expected ~1081"; exit 1; }
+          [ "$PASS" -ge 1 ] || { echo "::error::sweep pass is empty — nothing is being polled"; exit 1; }
+
+      - name: Endpoints answer with data
+        run: |
+          fail=0
+          for p in "drones" "vessels?lat=60&lon=25&radius=100" "cyber/flows" "strategic?minutes=1440" \
+                   "archive/stats" "datacentres" "navwarnings" "airspace/advisories"; do
+            code=$(curl -s -o /tmp/body -w "%{http_code}" -H "Origin: https://streetwatch.earth" \
+                     --max-time 30 "https://streetwatch-proxy.onrender.com/api/$p")
+            size=$(wc -c < /tmp/body)
+            printf "%-34s %s  %sB\n" "$p" "$code" "$size"
+            # A 200 carrying an error object is not success. Size catches the empty-but-OK case.
+            if [ "$code" != "200" ] || [ "$size" -lt 50 ]; then
+              echo "::error::/api/$p returned $code with ${size} bytes"; fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+
+      - name: Site and static pages load
+        run: |
+          for u in "https://streetwatch.earth/" \
+                   "https://streetwatch.earth/methodology.html" \
+                   "https://streetwatch.earth/findings/airfield-detection.html"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 "$u")
+            printf "%-58s %s\n" "$u" "$code"
+            [ "$code" = "200" ] || { echo "::error::$u returned $code"; exit 1; }
+          done
