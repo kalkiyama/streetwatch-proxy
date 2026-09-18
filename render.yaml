@@ -11,11 +11,19 @@ services:
     startCommand: node server.js
     healthCheckPath: /health
     envVars:
+      # EVERY origin the app is served from. This file is the SOURCE OF TRUTH: a Blueprint sync
+      # overwrites whatever the dashboard says, so a value edited there survives only until the
+      # next Blueprint deploy. On Sep 17 this line — untouched since setup — silently reverted
+      # ALLOW_ORIGIN to the Vercel preview URL alone, and every browser on every device lost all
+      # four proxy-backed tabs while curl kept returning 200, because curl does not enforce CORS.
       - key: ALLOW_ORIGIN
-        value: "https://streetwatch-blond.vercel.app"   # your web app origin (lock it down)
+        value: "https://streetwatch.earth,https://streetwatch-blond.vercel.app,http://localhost:5173"
       - key: RATE_LIMIT
         value: "120"           # requests per IP per minute
+      # Reverted the same way and for the same reason — marine coverage dropped to Finland alone.
+      # kystverket is deliberately absent: it has delivered zero rows across every log examined,
+      # reconnecting up to retry #20. A provider named and silent is worse than one not named.
       - key: AIS_PROVIDER
-        value: digitraffic      # keyless, Baltic. Switch to "aisstream" for global marine.
+        value: digitraffic,aisstream
       # - key: AISSTREAM_KEY    # required only if AIS_PROVIDER=aisstream (free key from aisstream.io)
       #   sync: false
