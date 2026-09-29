@@ -48,7 +48,10 @@ const path = require("path");
 const OVERPASS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.osm.ch/api/interpreter",
+  // overpass.osm.ch REMOVED before it was ever used here. In the power build it answered every
+  // tile with empty or near-empty results — 34 plants for central Europe — so it appears to serve
+  // a regional extract rather than the global database. As a fallback that is worse than no
+  // fallback: it converts a failure into a wrong answer that passes every check.
 ];
 // Identify honestly. Overpass answers an absent User-Agent with 406, and it is a free shared
 // service run on donated hardware — this project got its IP blocked in August by being impolite
