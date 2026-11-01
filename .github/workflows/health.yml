@@ -75,6 +75,18 @@ jobs:
           done
           [ "$fail" -eq 0 ]
 
+      - name: Archive is not near its row cap
+        run: |
+          # The cap drops the OLDEST rows when crossed, quietly shortening retention below the
+          # nominal 90 days. It approaches slowly and binds without a sound, so the warning has to
+          # come early: at ~3,300 rows a day net, 92% leaves about three weeks to raise the cap or
+          # move to a larger Neon plan before the history starts disappearing.
+          PCT=$(curl -s --max-time 30 "https://streetwatch-proxy.onrender.com/api/archive/stats" \
+                | python3 -c "import json,sys; print(json.load(sys.stdin).get('capacityUsedPct') or 0)")
+          echo "archive at ${PCT}% of its row cap"
+          python3 -c "import sys; sys.exit(1 if float('$PCT') > 92 else 0)" \
+            || { echo "::error::archive at ${PCT}% of ARCHIVE_MAX_ROWS — oldest rows will soon be dropped"; exit 1; }
+
       - name: Site and static pages load
         run: |
           for u in "https://streetwatch.earth/" \
