@@ -20,6 +20,13 @@ services:
         value: "https://streetwatch.earth,https://streetwatch-blond.vercel.app,http://localhost:5173"
       - key: RATE_LIMIT
         value: "120"           # requests per IP per minute
+      # The archive's row cap. When crossed, the OLDEST rows are dropped — so whenever it binds,
+      # this is the real retention rather than the nominal 90 days. Sized against the Neon plan:
+      # rows run about 356 bytes each including indexes. Above Neon's storage ceiling the failure
+      # is worse than the cap — writes are refused, so NEW contacts are lost instead of old ones.
+      # Raise only alongside a larger Neon plan.
+      - key: ARCHIVE_MAX_ROWS
+        value: "1350000"
       # Reverted the same way and for the same reason — marine coverage dropped to Finland alone.
       # kystverket is deliberately absent: it has delivered zero rows across every log examined,
       # reconnecting up to retry #20. A provider named and silent is worse than one not named.
