@@ -62,17 +62,33 @@ jobs:
       - name: Endpoints answer with data
         run: |
           fail=0
+          upstream=0
           for p in "drones" "vessels?lat=60&lon=25&radius=100" "cyber/flows" "strategic?minutes=1440" \
                    "archive/stats" "datacentres" "navwarnings" "airspace/advisories"; do
             code=$(curl -s -o /tmp/body -w "%{http_code}" -H "Origin: https://streetwatch.earth" \
                      --max-time 30 "https://streetwatch-proxy.onrender.com/api/$p")
             size=$(wc -c < /tmp/body)
             printf "%-34s %s  %sB\n" "$p" "$code" "$size"
+            # AN UPSTREAM OUTAGE IS NOT OURS. A 502 {"error":"upstream_unavailable"} is the proxy
+            # behaving correctly — saying a source it depends on is down. NGA's MSI portal went into
+            # open-ended maintenance on Nov 3, 2026 and this step failed every run for twelve days,
+            # so a broken CORS header or a dead sweep in that time would have been invisible: the
+            # monitor was already red. Red has to keep meaning "something of ours is broken".
+            if [ "$code" = "502" ] && grep -q upstream_unavailable /tmp/body; then
+              echo "::warning::/api/$p — its upstream source is down; the proxy is reporting it correctly"
+              upstream=$((upstream + 1))
             # A 200 carrying an error object is not success. Size catches the empty-but-OK case.
-            if [ "$code" != "200" ] || [ "$size" -lt 50 ]; then
+            elif [ "$code" != "200" ] || [ "$size" -lt 50 ]; then
               echo "::error::/api/$p returned $code with ${size} bytes"; fail=1
             fi
           done
+          # BUT NOT MANY AT ONCE. One source down is their outage. Several at the same moment is
+          # far more likely to be OUR egress — Render's network, a blocked IP — wearing the same
+          # 502, and that would pass silently if every one were only a warning.
+          if [ "$upstream" -ge 3 ]; then
+            echo "::error::$upstream upstream sources down at once — more likely the proxy's own egress than theirs"
+            fail=1
+          fi
           [ "$fail" -eq 0 ]
 
       - name: Archive is not near its row cap
