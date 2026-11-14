@@ -857,6 +857,7 @@ function getDrones(sinceMs = 15 * 60 * 1000) {
     // primary went down — the same defect class this project exists to catch, in its own metadata.
     source: `${(adsbStats && adsbStats.activeSource) || "ADS-B upstream"} · ADS-B (category B6, UAV type codes, military registry flag)`,
     upstream: (adsbStats && adsbStats.activeSource) || null,
+    upstreamPrimary: (adsbStats && adsbStats.primarySource) || null,
     upstreamFailovers: (adsbStats && adsbStats.failovers) || 0,
     updated: new Date().toISOString(),
     sweep: {

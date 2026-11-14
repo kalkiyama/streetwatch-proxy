@@ -191,6 +191,9 @@ const stats = {
   // receiver network sees different aircraft — so "nothing visible here" means something different
   // depending on who answered. That has to be visible, not hidden.
   bySource: {}, activeSource: null, failovers: 0,
+  // The CONFIGURED primary, from ADSB_UPSTREAMS. Reported so the client can tell a failover from
+  // the intended source without hard-coding a provider name that render.yaml can change.
+  primarySource: UPSTREAMS[0].name,
   upstreamWindow: [],           // timestamps of the last minute of upstream calls
   recentMs: [],                 // durations of the last 20 calls — a cumulative average
                                 // hides recovery after cold-start (4s TLS handshakes kept
