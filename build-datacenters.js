@@ -293,17 +293,38 @@ async function cables() {
   const q = `[out:json][timeout:180];
 way["submarine"="yes"]["communication"~"line|optical_fiber"];
 out geom tags;`;
-  const r = await fetch(OVERPASS, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "streetwatch.earth data centre map (one-off monthly build)",
-    },
-    body: "data=" + encodeURIComponent(q),
-  });
-  const text = await r.text();
-  if (text.trim().startsWith("<")) throw new Error("overpass returned an error page (server busy)");
-  const j = JSON.parse(text);
+  // A TIMED-OUT QUERY IS NOT AN ERROR TO OVERPASS. It answers 200 with valid JSON, an empty
+  // `elements` list and a `remark` saying the query ran out of time. The old code read that as
+  // "the world has 0 cables" and the run failed only because the workflow's guard caught it —
+  // Nov 8 and Nov 14 both. So: check the status, the remark, and emptiness (there is no real
+  // world in which OSM has no submarine cables), and try a second server before giving up.
+  const servers = [OVERPASS, "https://overpass.kumi.systems/api/interpreter"];
+  let j = null, lastErr = null;
+  for (const url of servers) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "streetwatch.earth data centre map (one-off monthly build)",
+        },
+        body: "data=" + encodeURIComponent(q),
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (text.trim().startsWith("<")) throw new Error("error page (server busy)");
+      const parsed = JSON.parse(text);
+      if (parsed.remark) throw new Error(String(parsed.remark).slice(0, 140));
+      if (!(parsed.elements || []).length) throw new Error("no elements returned");
+      j = parsed;
+      break;
+    } catch (e) {
+      lastErr = e;
+      console.log(`\n  ${url.split("/")[2]}: ${e.message}`);
+      await sleep(30000);
+    }
+  }
+  if (!j) throw lastErr;
   const out = [];
   for (const e of j.elements || []) {
     if (!e.geometry || e.geometry.length < 2) continue;
@@ -423,18 +444,29 @@ function statusChanges(previous, current) {
     console.log("dcx       : FAILED —", e.message);
   }
 
+  // The previous build, if there is one. On a first run there is nothing to compare against and
+  // the change list is simply empty — which is correct, not a failure.
+  let previous = null;
+  try { previous = JSON.parse(fs.readFileSync(OUT, "utf8")); } catch { /* first run */ }
+
   let cableRows = [];
+  let cablesFetched = new Date().toISOString();
+  let cablesCarried = false;
   try {
     await sleep(25000);
     cableRows = await cables();
   } catch (e) {
     console.log("cables    : FAILED —", e.message);
   }
-
-  // The previous build, if there is one. On a first run there is nothing to compare against and
-  // the change list is simply empty — which is correct, not a failure.
-  let previous = null;
-  try { previous = JSON.parse(fs.readFileSync(OUT, "utf8")); } catch { /* first run */ }
+  // CABLES ARE CARRIED FORWARD; navigational warnings are not. A submarine cable laid last month is
+  // still there this month, so the previous fetch is a true picture of it. Without this, one failed
+  // cable query held back a whole week of good facility data. cablesFetched says how old they are.
+  if (!cableRows.length && previous && (previous.cables || []).length) {
+    cableRows = previous.cables;
+    cablesFetched = previous.cablesFetched || previous.built;
+    cablesCarried = true;
+    console.log(`cables    : kept the previous ${cableRows.length} segments, fetched ${String(cablesFetched).slice(0, 10)}`);
+  }
 
   const fresh = statusChanges(previous, records);
   const cutoff = new Date(Date.now() - CHANGE_RETAIN_DAYS * 86400000).toISOString().slice(0, 10);
@@ -472,6 +504,8 @@ function statusChanges(previous, current) {
     changeCount: changes.length,
     changes,
     cableCount: cableRows.length,
+    cablesFetched,
+    cablesCarried,
     cables: cableRows,
   };
 
