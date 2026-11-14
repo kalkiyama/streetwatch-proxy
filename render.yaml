@@ -32,5 +32,12 @@ services:
       # reconnecting up to retry #20. A provider named and silent is worse than one not named.
       - key: AIS_PROVIDER
         value: digitraffic,aisstream
+      # airplanes.live PAUSED Nov 14, 2026. Its API now answers 403 asking projects to email
+      # contact@airplanes.live first. Every call was being refused anyway; continuing to send them
+      # to a service that has asked us to get in touch is not how to start that conversation.
+      # To restore once they reply: put airplanes.live|https://api.airplanes.live/v2/point/{lat}/{lon}/{radius}
+      # back at the front of this list.
+      - key: ADSB_UPSTREAMS
+        value: "adsb.lol|https://api.adsb.lol/v2/point/{lat}/{lon}/{radius},adsb.fi|https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{radius}"
       # - key: AISSTREAM_KEY    # required only if AIS_PROVIDER=aisstream (free key from aisstream.io)
       #   sync: false
